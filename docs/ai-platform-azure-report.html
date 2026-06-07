@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="light" data-accent="azure">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Platform 架構報告 · Azure IoT Edge · 腕戴式守護者</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f7f6f2; --surface:#ffffff; --surface-2:#fbfaf7;
+  --ink:#181a1f; --ink-soft:#4f535c; --ink-faint:#888d97;
+  --line:#e7e3da; --line-soft:#efece5;
+  --accent:#2b56d6; --accent-ink:#1e3fa6; --accent-tint:#eaf0fd;
+  --edge:#1f9d6b; --edge-tint:#e7f6ee;
+  --amber:#d98613; --amber-tint:#fbf1df;
+  --danger:#cf463e; --danger-tint:#fbe9e7;
+  --cyan:#0e93a8;
+  --sans:'Noto Sans TC',-apple-system,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --maxw:1240px; --rad:14px; --rad-sm:9px;
+  --sh-1:0 1px 2px rgba(20,22,28,.05);
+  --sh-2:0 6px 24px -10px rgba(20,22,28,.18);
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+[data-accent="teal"]{ --accent:#0e8a8f; --accent-ink:#0a6a6e; --accent-tint:#e3f4f4; }
+[data-accent="cobalt"]{ --accent:#3b3fc0; --accent-ink:#2d2f97; --accent-tint:#ecedfb; }
+[data-theme="dark"]{
+  --paper:#101216; --surface:#171a20; --surface-2:#1c2027;
+  --ink:#e9eaed; --ink-soft:#aab0bb; --ink-faint:#7b818c;
+  --line:#272b33; --line-soft:#21252c;
+  --accent-tint:#16213d; --edge-tint:#11261d; --amber-tint:#2a2113; --danger-tint:#2c1817;
+  --sh-2:0 10px 30px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  font-family:var(--sans); background:var(--paper); color:var(--ink);
+  line-height:1.72; font-weight:400; font-size:16.5px;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  transition:background .4s var(--ease), color .4s var(--ease);
+}
+::selection{background:var(--accent); color:#fff}
+a{color:var(--accent-ink); text-decoration:none}
+[data-theme="dark"] a{color:#9db4f5}
+
+/* ---------- progress + top bar ---------- */
+#progress{position:fixed;top:0;left:0;height:3px;width:0;background:var(--accent);z-index:90;transition:width .1s linear}
+.topbar{
+  position:sticky;top:0;z-index:80;display:flex;align-items:center;gap:14px;
+  padding:11px clamp(16px,4vw,40px); background:color-mix(in oklab,var(--paper) 86%, transparent);
+  backdrop-filter:blur(14px); border-bottom:1px solid var(--line-soft);
+}
+.topbar .mark{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.01em}
+.topbar .glyph{width:24px;height:24px;border-radius:7px;background:var(--accent);position:relative;flex:none}
+.topbar .glyph::after{content:"";position:absolute;inset:6px;border:2px solid var(--paper);border-radius:3px}
+.topbar .sub{color:var(--ink-faint);font-size:13px;font-weight:400;border-left:1px solid var(--line);padding-left:14px;margin-left:2px}
+@media(max-width:680px){.topbar .sub{display:none}}
+.topbar .spacer{flex:1}
+.tb-link{font-size:13.5px;color:var(--ink-soft);font-weight:500;padding:6px 10px;border-radius:7px}
+.tb-link:hover{background:var(--surface);color:var(--ink)}
+
+/* ---------- hero ---------- */
+.hero{
+  position:relative; overflow:hidden; border-bottom:1px solid var(--line);
+  padding:clamp(56px,9vw,120px) clamp(16px,4vw,40px) clamp(48px,6vw,80px);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in oklab,var(--ink) 8%, transparent) 1px, transparent 0) 0 0/26px 26px,
+    var(--surface);
+}
+.hero-inner{max-width:var(--maxw);margin:0 auto;position:relative}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12.5px;font-weight:500;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--accent-ink);
+  background:var(--accent-tint);padding:6px 13px;border-radius:100px;margin-bottom:26px;
+}
+.eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--edge);box-shadow:0 0 0 4px color-mix(in oklab,var(--edge) 22%,transparent)}
+h1.title{font-size:clamp(2.4rem,6.2vw,4.5rem);line-height:1.02;font-weight:900;letter-spacing:-.035em;max-width:16ch;text-wrap:balance}
+h1.title em{font-style:normal;color:var(--accent)}
+.lede{margin-top:24px;font-size:clamp(1.05rem,2vw,1.3rem);color:var(--ink-soft);max-width:60ch;font-weight:400;text-wrap:pretty}
+.chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:34px}
+.chip{
+  display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:500;
+  padding:8px 14px;border:1px solid var(--line);border-radius:100px;background:var(--surface-2);color:var(--ink-soft)
+}
+.chip b{color:var(--ink);font-weight:700}
+.chip .k{font-family:var(--mono);font-size:11px;color:var(--accent-ink);text-transform:uppercase;letter-spacing:.08em}
+
+/* ---------- layout ---------- */
+.shell{max-width:var(--maxw);margin:0 auto;display:grid;grid-template-columns:248px 1fr;gap:clamp(24px,4vw,60px);padding:0 clamp(16px,4vw,40px)}
+@media(max-width:900px){.shell{grid-template-columns:1fr}}
+nav.toc{position:sticky;top:74px;align-self:start;height:max-content;padding:40px 0;font-size:14px}
+@media(max-width:900px){nav.toc{display:none}}
+.toc .toc-h{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);padding:0 12px 12px}
+.toc a{display:flex;gap:12px;align-items:baseline;padding:7px 12px;border-radius:8px;color:var(--ink-soft);font-weight:500;transition:.18s var(--ease)}
+.toc a .n{font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);width:18px;flex:none}
+.toc a:hover{background:var(--surface);color:var(--ink)}
+.toc a.active{background:var(--accent-tint);color:var(--accent-ink)}
+.toc a.active .n{color:var(--accent)}
+
+main{padding:40px 0 80px;min-width:0}
+section.block{padding:42px 0;border-top:1px solid var(--line-soft);scroll-margin-top:74px}
+section.block:first-child{border-top:0}
+.kicker{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink);display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.kicker .n{color:var(--ink-faint)}
+h2{font-size:clamp(1.55rem,3.2vw,2.1rem);font-weight:800;letter-spacing:-.025em;line-height:1.18;margin-bottom:6px;text-wrap:balance}
+h3{font-size:1.12rem;font-weight:700;letter-spacing:-.01em;margin:30px 0 12px}
+p{margin:14px 0;color:var(--ink-soft);max-width:74ch;text-wrap:pretty}
+p strong,li strong{color:var(--ink);font-weight:700}
+ul,ol{margin:14px 0 14px 2px;padding-left:20px;color:var(--ink-soft);max-width:74ch}
+li{margin:7px 0}
+code{font-family:var(--mono);font-size:.86em;background:var(--surface);border:1px solid var(--line);padding:1.5px 6px;border-radius:6px;color:var(--accent-ink);white-space:nowrap}
+[data-theme="dark"] code{color:#9db4f5}
+
+/* ---------- tables ---------- */
+.tbl-wrap{margin:22px 0;border:1px solid var(--line);border-radius:var(--rad);overflow:hidden;background:var(--surface);box-shadow:var(--sh-1)}
+table{width:100%;border-collapse:collapse;font-size:14.5px}
+th,td{text-align:left;padding:13px 16px;vertical-align:top;border-bottom:1px solid var(--line-soft)}
+thead th{background:var(--surface-2);font-weight:700;color:var(--ink);font-size:12.5px;letter-spacing:.02em;text-transform:uppercase}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surface-2)}
+td strong{color:var(--ink)}
+td code{white-space:normal}
+.yes{color:var(--edge);font-weight:700}.no{color:var(--danger);font-weight:700}
+
+/* ---------- spec grid ---------- */
+.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--rad);overflow:hidden;margin:24px 0}
+.specs .cell{background:var(--surface);padding:20px}
+.specs .lab{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:8px}
+.specs .val{font-size:15px;font-weight:600;color:var(--ink);line-height:1.5}
+.specs .val small{display:block;font-weight:400;color:var(--ink-soft);font-size:13px;margin-top:3px}
+
+/* ---------- callouts ---------- */
+.note{margin:22px 0;background:var(--surface);border:1px solid var(--line);border-radius:var(--rad);padding:20px 22px;box-shadow:var(--sh-1)}
+.note.accent{background:var(--accent-tint);border-color:color-mix(in oklab,var(--accent) 28%,transparent)}
+.note.edge{background:var(--edge-tint);border-color:color-mix(in oklab,var(--edge) 28%,transparent)}
+.note .tag{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--accent-ink);margin-bottom:8px;display:block}
+.note.edge .tag{color:var(--edge)}
+.note p{margin:0;color:var(--ink);max-width:none}
+.note p+p{margin-top:10px}
+.quote{font-size:clamp(1.15rem,2.4vw,1.55rem);font-weight:700;line-height:1.4;letter-spacing:-.02em;color:var(--ink);margin:30px 0;padding-left:22px;border-left:3px solid var(--accent);max-width:30ch;text-wrap:balance}
+
+/* ---------- diagram cards ---------- */
+.diagram{background:#fff;border:1px solid var(--line);border-radius:var(--rad);padding:26px;margin:24px 0;box-shadow:var(--sh-2);overflow-x:auto}
+.diagram .cap{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:#8a8f99;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.diagram .cap::before{content:"";width:18px;height:1px;background:#c9cdd6}
+.mermaid{display:flex;justify-content:center;min-height:40px}
+.mermaid text{font-family:var(--sans)!important}
+
+/* ---------- stepper ---------- */
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:24px 0;counter-reset:s}
+.flow .step{background:var(--surface);border:1px solid var(--line);border-radius:var(--rad-sm);padding:16px;position:relative}
+.flow .step::before{counter-increment:s;content:counter(s,decimal-leading-zero);font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700}
+.flow .step h4{font-size:14px;font-weight:700;margin:6px 0 4px}
+.flow .step span{font-size:12.5px;color:var(--ink-faint);font-family:var(--mono)}
+
+/* ---------- figure gallery ---------- */
+.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:24px 0}
+figure{margin:0;border:1px solid var(--line);border-radius:var(--rad-sm);overflow:hidden;background:var(--surface)}
+figure img{width:100%;display:block;background:#fff}
+figure figcaption{font-size:12.5px;color:var(--ink-faint);padding:9px 12px;border-top:1px solid var(--line-soft)}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--line);background:var(--surface);padding:48px clamp(16px,4vw,40px)}
+.foot-inner{max-width:var(--maxw);margin:0 auto;display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;align-items:center}
+.foot-links{display:flex;flex-wrap:wrap;gap:10px}
+.foot-links a{font-size:13.5px;font-family:var(--mono);color:var(--ink-soft);border:1px solid var(--line);padding:7px 13px;border-radius:8px}
+.foot-links a:hover{border-color:var(--accent);color:var(--accent-ink)}
+.foot-meta{font-size:13px;color:var(--ink-faint)}
+
+/* ---------- tweaks ---------- */
+.tw-btn{position:fixed;right:20px;bottom:20px;z-index:95;width:46px;height:46px;border-radius:50%;border:1px solid var(--line);background:var(--surface);box-shadow:var(--sh-2);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--ink-soft)}
+.tw-btn:hover{color:var(--ink)}
+.tw-panel{position:fixed;right:20px;bottom:78px;z-index:95;width:230px;background:var(--surface);border:1px solid var(--line);border-radius:var(--rad);box-shadow:var(--sh-2);padding:16px;opacity:0;transform:translateY(8px) scale(.97);pointer-events:none;transition:.22s var(--ease)}
+.tw-panel.open{opacity:1;transform:none;pointer-events:auto}
+.tw-panel .tw-h{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:14px}
+.tw-row{margin-bottom:16px}
+.tw-row .l{font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;font-weight:500}
+.seg{display:flex;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
+.seg button{flex:1;border:0;background:transparent;font-family:var(--sans);font-size:12.5px;font-weight:600;color:var(--ink-soft);padding:6px;border-radius:6px;cursor:pointer;transition:.15s}
+.seg button.on{background:var(--accent);color:#fff}
+.sw{display:flex;gap:8px}
+.sw button{width:30px;height:30px;border-radius:8px;border:2px solid transparent;cursor:pointer;transition:.15s}
+.sw button.on{border-color:var(--ink)}
+
+/* ---------- reveal ---------- */
+.js .reveal{opacity:0;transform:translateY(18px);transition:opacity .6s var(--ease),transform .6s var(--ease)}
+.js .reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.js .reveal{opacity:1!important;transform:none!important}}
+</style>
+<script>
+/* early: prevent theme/reveal flash before the main script loads */
+(function(){var r=document.documentElement;r.classList.add('js');try{var t=JSON.parse(localStorage.getItem('aiReportTweaks')||'{}');if(t.theme)r.dataset.theme=t.theme;else if(matchMedia('(prefers-color-scheme:dark)').matches)r.dataset.theme='dark';if(t.accent)r.dataset.accent=t.accent;}catch(e){}})();
+</script>
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <div class="mark"><span class="glyph"></span>AI Platform 架構報告</div>
+  <span class="sub">腕戴式跌倒守護者 · Edge MLOps</span>
+  <span class="spacer"></span>
+  <a class="tb-link" href="ai-platform-azure-report.md">Markdown</a>
+  <a class="tb-link" href="../cloud/azure/README-azure.md">Runbook</a>
+</header>
+
+<section class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow"><span class="dot"></span>專題技術報告 · Azure IoT Edge</span>
+    <h1 class="title">把 AI 模型<br><em>部署到邊緣</em>的平台</h1>
+    <p class="lede">以 Azure IoT Edge 作為 AI platform：雲端集中管理、將推論模組下發到永遠開機的宿舍邊緣節點，搭配訓練／日常雙手錶 App，形成可在校園網路實機展示的 Edge MLOps 系統。</p>
+    <div class="chips">
+      <span class="chip"><span class="k">Cloud</span><b>Azure IoT Edge</b></span>
+      <span class="chip"><span class="k">Arch</span><b>oneM2M 三層</b></span>
+      <span class="chip"><span class="k">Model</span>RandomForest 27 維 · CV <b>89.5%</b></span>
+      <span class="chip"><span class="k">Edge</span>宿舍電腦 <b>140.113.123.43</b></span>
+    </div>
+  </div>
+</section>
+
+<div class="shell">
+  <nav class="toc" aria-label="目錄">
+    <div class="toc-h">目錄</div>
+    <a href="#s1"><span class="n">01</span>摘要</a>
+    <a href="#s2"><span class="n">02</span>何謂 AI Platform</a>
+    <a href="#s3"><span class="n">03</span>平台選型決策</a>
+    <a href="#s4"><span class="n">04</span>總體架構</a>
+    <a href="#s5"><span class="n">05</span>元件職責</a>
+    <a href="#s6"><span class="n">06</span>Edge MLOps 生命週期</a>
+    <a href="#s7"><span class="n">07</span>雙手錶 App</a>
+    <a href="#s8"><span class="n">08</span>端到端資料流</a>
+    <a href="#s9"><span class="n">09</span>Demo 網路策略</a>
+    <a href="#s10"><span class="n">10</span>成本與安全</a>
+    <a href="#s11"><span class="n">11</span>限制與未來工作</a>
+    <a href="#s12"><span class="n">12</span>檔案與指令</a>
+  </nav>
+
+  <main>
+    <!-- 01 -->
+    <section class="block reveal" id="s1">
+      <div class="kicker"><span class="n">01</span>摘要</div>
+      <h2>一頁看懂這套 AI 平台</h2>
+      <p>本系統以 <strong>oneM2M 三層架構</strong>為骨幹（末端裝置 / 邊緣推論 / 雲端編排）。為滿足「需有一個 AI platform」的要求，導入 <strong>Azure IoT Edge</strong>：IoT Hub 作為控制平面下發 AI 推論模組、ACR 作為版本化映像倉庫、宿舍電腦作為永遠開機且校園可達的邊緣節點。</p>
+      <div class="note accent"><span class="tag">核心定位</span><p>AI 平台的價值不在「每次推論」，而在把 AI 模型的生命週期（打包 → 版本化 → 部署 → 更新）制度化。推論在邊緣執行，是 Edge AI 的刻意設計：低延遲、可離線。</p></div>
+      <div class="specs">
+        <div class="cell"><div class="lab">AI 平台</div><div class="val">Azure IoT Edge<small>IoT Hub + ACR + Edge runtime</small></div></div>
+        <div class="cell"><div class="lab">邊緣節點</div><div class="val">宿舍電腦 140.113.123.43<small>Win 11 家用版 · iotedgehubdev 模擬器</small></div></div>
+        <div class="cell"><div class="lab">AI 模組</div><div class="val">posture-api<small>RandomForest 27 維 · CV 87.0%</small></div></div>
+        <div class="cell"><div class="lab">訓練</div><div class="val">本機腳本<small>真實跌倒資料</small></div></div>
+        <div class="cell"><div class="lab">資料回流</div><div class="val">訓練 App<small>/api/training → 擴充訓練集</small></div></div>
+      </div>
+    </section>
+
+    <!-- 02 -->
+    <section class="block reveal" id="s2">
+      <div class="kicker"><span class="n">02</span>What is an AI platform</div>
+      <h2>什麼是 AI Platform，本專案如何滿足</h2>
+      <p>在 MLOps 語境下，一個「AI / ML 平台」負責 AI 模型生命週期的工程化，而非親自跑每一次推論。下表把「平台職責」逐項對應到本專案的實現：</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>平台職責</th><th>本專案的實現</th></tr></thead>
+        <tbody>
+          <tr><td>模型／服務<strong>打包</strong>為可部署單位</td><td><code>posture-api</code> 容器（重用既有 Dockerfile）＝ IoT Edge <strong>模組</strong></td></tr>
+          <tr><td>模型版本<strong>儲存／倉庫</strong></td><td><strong>Azure Container Registry</strong>（映像 tag 版本）</td></tr>
+          <tr><td><strong>集中部署</strong>到目標節點</td><td><strong>Azure IoT Hub</strong> 下發部署清單到 Edge 裝置</td></tr>
+          <tr><td><strong>遠端管理／更新</strong></td><td>IoT Hub <code>set-modules</code>：改清單即可換版本、回滾</td></tr>
+          <tr><td><strong>持續更新閉環</strong></td><td>訓練 App 回流 → 重訓 → 重建映像 → 重新部署</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><span class="tag">誠實定位（給報告交代）</span><p>本專案採<strong>精簡範圍</strong>——平台負責「把 AI 模組部署／管理到邊緣」這條 Edge AI 部署生命週期；<strong>模型訓練維持在本機腳本</strong>。這是一個聚焦、完整、可運作的 Edge MLOps 子集，而非把訓練也搬上雲（後者列為未來工作）。</p></div>
+      <blockquote class="quote">邊緣是「部署目標」，Azure IoT Edge 是把 AI 模組送上邊緣並持續管理的「控制塔」。</blockquote>
+    </section>
+
+    <!-- 03 -->
+    <section class="block reveal" id="s3">
+      <div class="kicker"><span class="n">03</span>選型</div>
+      <h2>平台選型決策</h2>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>候選</th><th>結論</th><th>理由</th></tr></thead>
+        <tbody>
+          <tr><td>純本機 docker（現況）</td><td><span class="no">✗ 不算平台</span></td><td>只是手動 <code>docker build</code>，無版本倉庫、無集中部署</td></tr>
+          <tr><td>GCP Vertex AI</td><td><span class="no">✗ 已棄用</span></td><td>Cloud IoT Core 2023 下線，無託管 cloud→edge 部署，邊緣只能手動 pull</td></tr>
+          <tr><td><strong>Azure IoT Edge</strong></td><td><span class="yes">✓ 採用</span></td><td>原生「雲端→邊緣」託管部署：IoT Hub 下發、ACR 倉庫、可遠端更新；最貼 Edge MLOps</td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>邊緣 runtime 的取捨</strong>：目標機是 Windows 11 家用版 → 無 Hyper-V → 不能用 EFLOW。因此採 <strong>iotedgehubdev 模擬器</strong>（靠現有 Docker Desktop），足以展示「部署清單 → 模組在邊緣運行」的完整概念。</p>
+    </section>
+
+    <!-- 04 -->
+    <section class="block reveal" id="s4">
+      <div class="kicker"><span class="n">04</span>架構</div>
+      <h2>總體架構</h2>
+      <p>對應 oneM2M 三層：ASN＝手錶/手機；MN＝<code>postureApi</code> 邊緣模組；IN＝ThingsBoard。Azure IoT Edge 疊在 MN 之上，負責把 AI 模組部署到邊緣節點並管理。</p>
+      <div class="diagram"><div class="cap">系統部署視圖</div>
+<pre class="mermaid">
+flowchart TB
+  subgraph CLOUD["Azure 雲端 · AI 平台控制塔"]
+    HUB["IoT Hub (Free F1)<br/>裝置註冊 · 部署清單"]
+    ACR["Container Registry<br/>模組映像 (版本化)"]
+  end
+  subgraph EDGE["宿舍電腦 140.113.123.43 · 邊緣節點"]
+    SIM["IoT Edge runtime<br/>iotedgehubdev 模擬器"]
+    MOD["postureApi 模組<br/>RandomForest 27維 + HR 基線 · :8000"]
+    TB["ThingsBoard CE<br/>規則鏈 · 告警升級 · :18080"]
+    SIM --> MOD
+  end
+  subgraph DEV["末端裝置 · 校園網路"]
+    WD["wear_os_app<br/>日常偵測 + SOS"]
+    WT["wear_os_trainer_app<br/>標註採集"]
+    PH["phone_app<br/>守護者監看"]
+  end
+  ACR -- "映像" --> SIM
+  HUB -- "部署清單" --> SIM
+  WD -- "POST /api/infer" --> MOD
+  WT -- "POST /api/training" --> MOD
+  WD -- "telemetry" --> TB
+  PH -- "監看" --> TB
+  MOD -. "情境結果" .-> TB
+</pre></div>
+    </section>
+
+    <!-- 05 -->
+    <section class="block reveal" id="s5">
+      <div class="kicker"><span class="n">05</span>元件</div>
+      <h2>元件職責</h2>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>元件</th><th>層</th><th>職責</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Azure IoT Hub</strong></td><td>雲端</td><td>註冊 Edge 裝置；保存／下發部署清單；遠端管理（portal 可見模組）</td></tr>
+          <tr><td><strong>Container Registry</strong></td><td>雲端</td><td>儲存 posture-api 模組映像（版本 tag），邊緣由此拉取</td></tr>
+          <tr><td><strong>Edge runtime（模擬器）</strong></td><td>邊緣</td><td>依清單拉映像、起 edgeAgent / edgeHub / postureApi</td></tr>
+          <tr><td><strong>postureApi 模組</strong></td><td>邊緣</td><td>AI 推論：IMU+HR → 情境 + 信心 + 特徵；<code>/api/infer · /api/training · /api/demo/inject</code></td></tr>
+          <tr><td><strong>ThingsBoard CE</strong></td><td>邊緣（編排角色）</td><td>規則鏈 escalation、告警建立/清除/升級、戰情儀表板、雙向命令</td></tr>
+          <tr><td><strong>wear_os_app</strong></td><td>末端</td><td>日常偵測 + SOS，只顯示結果</td></tr>
+          <tr><td><strong>wear_os_trainer_app</strong></td><td>末端</td><td>採集標註資料餵 <code>/api/training</code></td></tr>
+          <tr><td><strong>phone_app</strong></td><td>末端</td><td>守護者監看、一鍵呼叫/派遣</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note edge"><span class="tag">設計原則</span><p><strong>新增不破壞</strong>：AI 模組重用既有 <code>posture-api/Dockerfile</code>；模型以 <code>./data</code> 掛載進模組；後端 schema、ThingsBoard、手錶採集邏輯皆未改。</p></div>
+    </section>
+
+    <!-- 06 -->
+    <section class="block reveal" id="s6">
+      <div class="kicker"><span class="n">06</span>Edge MLOps</div>
+      <h2>Edge MLOps 生命週期</h2>
+      <div class="diagram"><div class="cap">持續更新閉環</div>
+<pre class="mermaid">
+flowchart LR
+  A["訓練 App 回流<br/>/api/training"] --> B["本機重訓<br/>train_fall_model"]
+  B --> C["模型產出<br/>.joblib"]
+  C --> D["打包映像<br/>build_and_push"]
+  D --> E["下發清單<br/>IoT Hub"]
+  E --> F["邊緣運行<br/>iotedgehubdev"]
+  F --> G["手錶推論<br/>/api/infer"]
+  G -. "新資料" .-> A
+</pre></div>
+      <div class="flow">
+        <div class="step"><h4>資料</h4><span>訓練 App → /api/training</span></div>
+        <div class="step"><h4>訓練</h4><span>train_fall_model.py</span></div>
+        <div class="step"><h4>打包</h4><span>映像 → ACR</span></div>
+        <div class="step"><h4>部署</h4><span>gen + set-modules</span></div>
+        <div class="step"><h4>運行</h4><span>iotedgehubdev start</span></div>
+        <div class="step"><h4>更新</h4><span>重訓 → 重建 → 重部署</span></div>
+      </div>
+      <h3>模型評估（5-fold 交叉驗證）</h3>
+      <p>情境分類器以真實跌倒資料集訓練，<code>FALL / LIE_DOWN</code> 近乎完美；<code>SIT_DOWN</code> 因 sit≈stand 為資料天花板（非程式 bug），已誠實揭露。</p>
+      <div class="gallery">
+        <figure><img src="img/confusion_matrix.png" alt="混淆矩陣" loading="lazy"><figcaption>混淆矩陣（5-fold CV）</figcaption></figure>
+        <figure><img src="img/per_class_metrics.png" alt="各類別指標" loading="lazy"><figcaption>各類別 precision / recall</figcaption></figure>
+        <figure><img src="img/feature_importance.png" alt="特徵重要性" loading="lazy"><figcaption>27 維特徵重要性</figcaption></figure>
+      </div>
+    </section>
+
+    <!-- 07 -->
+    <section class="block reveal" id="s7">
+      <div class="kicker"><span class="n">07</span>裝置</div>
+      <h2>雙手錶 App 與資料回流</h2>
+      <p>把「訓練」與「日常使用」拆成兩支獨立可並裝的 App，對應 AI 平台的「資料採集前端」與「部署產品」。</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>App</th><th>applicationId</th><th>角色</th><th>主要動作</th></tr></thead>
+        <tbody>
+          <tr><td><strong>wear_os_trainer_app</strong></td><td><code>…wear_os_trainer</code></td><td>標註資料採集前端</td><td>選標籤 → 錄 5s → <code>POST /api/training</code>；顯示覆蓋度</td></tr>
+          <tr><td><strong>wear_os_app</strong></td><td><code>…wear_os_app</code></td><td>日常產品</td><td><code>POST /api/infer</code> 偵測 + SOS 升級 + 守護者聯動</td></tr>
+        </tbody>
+      </table></div>
+      <p>兩支重用同一套原生心率模組（Health Services）與 50Hz IMU 採集邏輯；不同 <code>applicationId</code> 讓兩者可在同一支手錶並存安裝。</p>
+    </section>
+
+    <!-- 08 -->
+    <section class="block reveal" id="s8">
+      <div class="kicker"><span class="n">08</span>資料流</div>
+      <h2>端到端資料流</h2>
+      <div class="diagram"><div class="cap">推論 → 編排 → 守護者</div>
+<pre class="mermaid">
+sequenceDiagram
+  participant W as 手錶 wear_os_app
+  participant M as postureApi 模組 :8000
+  participant T as ThingsBoard :18080
+  participant G as 守護者手機
+  W->>M: POST /api/infer (IMU 50Hz + HR)
+  M-->>W: situation + confidence + features
+  W->>T: telemetry (situation + features + GPS)
+  T->>T: 規則鏈算 escalation → 建/升級告警
+  T-->>G: Notification Center 推播
+  G->>T: 一鍵呼叫 / 派遣
+  T-->>W: 下行命令 → 手錶響鈴 / 顯示「前往中」
+</pre></div>
+      <p>推論在邊緣模組完成（低延遲、可離線）；escalation 與告警編排在 ThingsBoard；AI 平台（Azure）不在即時路徑上，而是負責「模組怎麼上到邊緣、怎麼更新」。</p>
+    </section>
+
+    <!-- 09 -->
+    <section class="block reveal" id="s9">
+      <div class="kicker"><span class="n">09</span>Demo</div>
+      <h2>Demo 網路策略</h2>
+      <p><strong>問題</strong>：學校 WiFi 常開「AP 用戶端隔離」，同一 AP 的兩台裝置互看不到 → 會擋手錶連筆電 <code>:8000</code>，也擋 ThingsBoard <code>:18080</code>。此問題與雲端選擇無關。</p>
+      <div class="note accent"><span class="tag">解法</span><p>邊緣節點是宿舍電腦的<strong>校園路由 IP 140.113.123.43</strong>。手錶連它是「經校園路由到伺服器」，而非「同一 AP 的兩台 client 互連」，<strong>不受用戶端隔離影響</strong>。</p></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>路線</th><th>內容</th><th>風險</th></tr></thead>
+        <tbody>
+          <tr><td><strong>主力（live）</strong></td><td>手錶/手機 → 140.113.123.43:8000（模組）+ :18080（TB），走校園網路</td><td>需 8000/18080 入站放行、IP 穩定</td></tr>
+          <tr><td><strong>保險（注入）</strong></td><td><code>/api/demo/inject?scenario=collapse</code> 在本機灌情境，戰情儀表板用該機瀏覽器演完整升級</td><td>零外部依賴，絕不出包</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note edge"><span class="tag">Demo 前必做</span><p>① <code>open_firewall.ps1</code> 放行入站 8000/18080；② 確認 140.113.123.43 穩定；③ <strong>用手機連教室 WiFi 實測 <code>http://140.113.123.43:8000/health</code></strong>，通了走主力、不通走保險。</p></div>
+    </section>
+
+    <!-- 10 -->
+    <section class="block reveal" id="s10">
+      <div class="kicker"><span class="n">10</span>成本 · 安全</div>
+      <h2>成本與安全</h2>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>項目</th><th>說明</th></tr></thead>
+        <tbody>
+          <tr><td><strong>IoT Hub F1</strong></td><td>永久免費層（8000 訊息/日，每訂閱 1 個），足夠 demo</td></tr>
+          <tr><td><strong>ACR Basic</strong></td><td>小額月費；demo 後可 <code>az acr delete</code></td></tr>
+          <tr><td><strong>模擬器 / Docker</strong></td><td>免費；無「不歸零」計費資源</td></tr>
+          <tr><td><strong>憑證</strong></td><td>ACR 密碼、Edge 連線字串寫入 <code>.env</code>（不入版控）</td></tr>
+          <tr><td><strong>網路曝露</strong></td><td>邊緣節點僅開放必要埠（8000/18080）；推論為校園內網流量</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- 11 -->
+    <section class="block reveal" id="s11">
+      <div class="kicker"><span class="n">11</span>限制</div>
+      <h2>限制與未來工作</h2>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>限制</th><th>說明 / 未來方向</th></tr></thead>
+        <tbody>
+          <tr><td>Windows 家用版無 EFLOW</td><td>採 iotedgehubdev 模擬器（dev 工具）；升級路徑：WSL2 安裝 <code>aziot-edge</code> 真實 runtime</td></tr>
+          <tr><td>訓練在本機</td><td>精簡範圍；未來可接 Azure ML 做雲端訓練／實驗追蹤／模型註冊表，形成完整 CT 管線</td></tr>
+          <tr><td>模型以 bind-mount 進模組</td><td>同機 demo 最省事；要部署到別台再改成 build 階段 baked 進映像</td></tr>
+          <tr><td>SIT_DOWN 召回率低</td><td>sit≈stand 為資料天花板（非程式 bug），已誠實揭露</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- 12 -->
+    <section class="block reveal" id="s12">
+      <div class="kicker"><span class="n">12</span>附錄</div>
+      <h2>檔案與指令對照</h2>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>檔案（cloud/azure/）</th><th>作用</th><th>指令</th></tr></thead>
+        <tbody>
+          <tr><td><code>setup_azure.ps1</code></td><td>建 RG / IoT Hub F1 / Edge 裝置 / ACR，寫 .env</td><td><code>.\cloud\azure\setup_azure.ps1</code></td></tr>
+          <tr><td><code>build_and_push.ps1</code></td><td>build 模組映像 → 推 ACR</td><td><code>.\cloud\azure\build_and_push.ps1</code></td></tr>
+          <tr><td><code>gen_deployment.ps1</code></td><td>代入 .env → deployment.generated.json</td><td><code>.\cloud\azure\gen_deployment.ps1</code></td></tr>
+          <tr><td><code>run_edge.ps1</code></td><td>模擬器 setup + start（+ 推 IoT Hub）</td><td><code>.\cloud\azure\run_edge.ps1 -SetModules</code></td></tr>
+          <tr><td><code>open_firewall.ps1</code></td><td>放行入站 8000/18080（系統管理員）</td><td><code>.\cloud\azure\open_firewall.ps1</code></td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><span class="tag">驗證清單</span><p><code>az iot hub device-identity list</code> 見 edge 裝置；ACR 有 posture-api 映像；<code>docker ps</code> 見 postureApi + edgeHub；<code>scripts/verify_live.py</code> 打 :8000/api/infer 回傳分類；portal IoT Hub → Devices → Modules 出現 postureApi（截圖佐證）。</p></div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-meta">腕戴式「生理數位孿生守護者」· Wearable Guardian v3.2 · AI Platform = Azure IoT Edge</div>
+    <div class="foot-links">
+      <a href="ai-platform-azure-report.md">報告 Markdown</a>
+      <a href="architecture.md">系統總架構</a>
+      <a href="progress-dual-role.md">工程決策日誌</a>
+      <a href="../cloud/azure/README-azure.md">Azure Runbook</a>
+    </div>
+  </div>
+</footer>
+
+<button class="tw-btn" id="twBtn" aria-label="調整外觀">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+</button>
+<div class="tw-panel" id="twPanel">
+  <div class="tw-h">Tweaks</div>
+  <div class="tw-row">
+    <div class="l">主題</div>
+    <div class="seg" id="segTheme"><button data-v="light">淺色</button><button data-v="dark">深色</button></div>
+  </div>
+  <div class="tw-row">
+    <div class="l">強調色</div>
+    <div class="sw" id="swAccent">
+      <button data-v="azure" style="background:#2b56d6" aria-label="azure"></button>
+      <button data-v="teal" style="background:#0e8a8f" aria-label="teal"></button>
+      <button data-v="cobalt" style="background:#3b3fc0" aria-label="cobalt"></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  /* ---- mermaid ---- */
+  if (window.mermaid){
+    mermaid.initialize({
+      startOnLoad:true, theme:'base', securityLevel:'loose',
+      themeVariables:{
+        fontFamily:"'Noto Sans TC', sans-serif", fontSize:'14px',
+        primaryColor:'#eef2fb', primaryBorderColor:'#2b56d6', primaryTextColor:'#181a1f',
+        lineColor:'#9aa0ad', secondaryColor:'#e7f6ee', tertiaryColor:'#fbf4e6',
+        clusterBkg:'#f7f8fb', clusterBorder:'#d9dde6'
+      },
+      flowchart:{curve:'basis', htmlLabels:true, padding:14},
+      sequence:{actorMargin:46, mirrorActors:false, useMaxWidth:true}
+    });
+  }
+
+  /* ---- reading progress ---- */
+  const prog=document.getElementById('progress');
+  const onScroll=()=>{
+    const h=document.documentElement.scrollHeight-innerHeight;
+    prog.style.width=(h>0?(scrollY/h*100):0)+'%';
+  };
+  addEventListener('scroll',onScroll,{passive:true}); onScroll();
+
+  /* ---- scroll-spy ---- */
+  const links=[...document.querySelectorAll('nav.toc a')];
+  const map=new Map(links.map(a=>[a.getAttribute('href').slice(1),a]));
+  const spy=new IntersectionObserver((es)=>{
+    es.forEach(e=>{ if(e.isIntersecting){
+      links.forEach(l=>l.classList.remove('active'));
+      const a=map.get(e.target.id); if(a)a.classList.add('active');
+    }});
+  },{rootMargin:'-45% 0px -50% 0px'});
+  document.querySelectorAll('section.block').forEach(s=>spy.observe(s));
+
+  /* ---- reveal ---- */
+  const rv=new IntersectionObserver((es)=>{
+    es.forEach(e=>{ if(e.isIntersecting){e.target.classList.add('in');rv.unobserve(e.target);} });
+  },{rootMargin:'0px 0px -8% 0px',threshold:.08});
+  document.querySelectorAll('.reveal').forEach(el=>rv.observe(el));
+
+  /* ---- tweaks (theme/accent already applied in <head> to avoid flash) ---- */
+  const root=document.documentElement;
+  const save=()=>localStorage.setItem('aiReportTweaks',JSON.stringify({theme:root.dataset.theme,accent:root.dataset.accent}));
+  const syncUI=()=>{
+    document.querySelectorAll('#segTheme button').forEach(b=>b.classList.toggle('on',b.dataset.v===root.dataset.theme));
+    document.querySelectorAll('#swAccent button').forEach(b=>b.classList.toggle('on',b.dataset.v===root.dataset.accent));
+  };
+  document.getElementById('segTheme').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;root.dataset.theme=b.dataset.v;save();syncUI();});
+  document.getElementById('swAccent').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;root.dataset.accent=b.dataset.v;save();syncUI();});
+  const panel=document.getElementById('twPanel');
+  document.getElementById('twBtn').addEventListener('click',()=>panel.classList.toggle('open'));
+  addEventListener('click',e=>{if(!e.target.closest('#twPanel')&&!e.target.closest('#twBtn'))panel.classList.remove('open');});
+  syncUI();
+</script>
+</body>
+</html>

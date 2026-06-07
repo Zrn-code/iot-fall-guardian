@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "holdout_accuracy": 1.0,
+  "cv_accuracy": 1.0,
+  "samples": 500,
+  "per_class": {
+    "FALL": 235,
+    "NORMAL": 265
+  },
+  "model_kind": "random-forest-v3",
+  "message": null
+}

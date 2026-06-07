@@ -1,0 +1,87 @@
+# ──────────────────────────────────────────────────────────────
+# Secrets / credentials (NEVER commit) — see also per-app .gitignore
+# ──────────────────────────────────────────────────────────────
+.env
+**/.env
+!**/.env.example
+cloud/azure/.env
+cloud/azure/deployment.generated.json
+
+# Provisioned ThingsBoard device tokens & per-wearer runtime state
+data/*_tokens.json
+data/worker_tokens.json
+data/guardian_tokens.json
+data/worker_baselines.json
+
+# Android signing material
+**/*.jks
+**/*.keystore
+**/key.properties
+**/android/key.properties
+
+# Claude Code local config / agent settings
+.claude/
+
+# ──────────────────────────────────────────────────────────────
+# Data (large / generated / raw)
+# ──────────────────────────────────────────────────────────────
+data/raw/
+data/processed/
+
+# ──────────────────────────────────────────────────────────────
+# Python
+# ──────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# ──────────────────────────────────────────────────────────────
+# Flutter / Dart (apps also carry their own .gitignore; these are
+# repo-wide catch-alls so build output never slips in)
+# ──────────────────────────────────────────────────────────────
+**/build/
+**/.dart_tool/
+**/.pub-cache/
+**/.pub/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/coverage/
+**/doc/api/
+
+# ──────────────────────────────────────────────────────────────
+# Android / Gradle
+# ──────────────────────────────────────────────────────────────
+**/.gradle/
+**/android/.gradle/
+**/android/.kotlin/
+**/android/captures/
+**/android/local.properties
+**/local.properties
+
+# ──────────────────────────────────────────────────────────────
+# Firebase Hosting cache
+# ──────────────────────────────────────────────────────────────
+**/.firebase/
+firebase-debug.log
+**/firebase-debug.log
+
+# ──────────────────────────────────────────────────────────────
+# IDE / editor
+# ──────────────────────────────────────────────────────────────
+**/.idea/
+**/*.iml
+*.iml
+
+# ──────────────────────────────────────────────────────────────
+# ThingsBoard backups & superseded archive
+# ──────────────────────────────────────────────────────────────
+scripts/tb_backups/
+_archive/
+
+# ──────────────────────────────────────────────────────────────
+# OS cruft
+# ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

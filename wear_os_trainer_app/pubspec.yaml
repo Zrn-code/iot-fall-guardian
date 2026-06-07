@@ -1,0 +1,26 @@
+name: wear_os_trainer_app
+description: "Heat-Strain/Fall Guardian — Wear OS TRAINING app. Captures labelled 50 Hz IMU + HR windows and uploads them to the posture-api /api/training endpoint to feed the Vertex AI continuous-training pipeline. Separate from the daily detection app (wear_os_app)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  sensors_plus: ^6.1.1
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+  permission_handler: ^11.3.1
+  geolocator: ^13.0.1
+  vibration: ^2.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

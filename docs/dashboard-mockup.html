@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Wearable Guardian — Care Console (design mockup)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#eef2f6; --card:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#eef2f7;
+    --blue:#2563eb; --green:#16a34a; --amber:#f59e0b; --orange:#ea580c; --red:#dc2626; --cyan:#0891b2; --purple:#7c3aed;
+    --shadow:0 1px 3px rgba(15,23,42,.06),0 1px 2px rgba(15,23,42,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Inter",Roboto,"Noto Sans TC",system-ui,-apple-system,sans-serif;font-size:14px;}
+  .appbar{height:56px;background:var(--card);box-shadow:var(--shadow);display:flex;align-items:center;
+    justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:500;}
+  .appbar .brand{font-weight:700;font-size:16px;display:flex;align-items:center;gap:8px;}
+  .appbar .brand small{color:var(--muted);font-weight:500;font-size:12px;}
+  .appbar nav{display:flex;gap:18px;color:var(--muted);font-size:13px;align-items:center;}
+  .wrap{max-width:1340px;margin:0 auto;padding:18px;display:flex;flex-direction:column;gap:16px;}
+  .g2{display:grid;grid-template-columns:1fr 372px;gap:16px;}
+  .g11{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;}
+  .card-h{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line);}
+  .card-h h3{margin:0;font-size:14px;font-weight:700;}
+  .card-h .sub{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:10px;}
+
+  /* KPI */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+  .kpi{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:15px 18px;display:flex;flex-direction:column;gap:6px;}
+  .kpi .top{display:flex;align-items:center;justify-content:space-between;}
+  .kpi .l{font-size:12px;color:var(--muted);font-weight:600;}
+  .kpi .ic{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;}
+  .kpi .v{font-size:25px;font-weight:800;line-height:1;}
+  .kpi .v small{font-size:12px;color:#94a3b8;font-weight:600;margin-left:2px;}
+  .kpi .t{font-size:11px;color:var(--muted);}
+
+  /* Map */
+  #map{height:404px;width:100%;}
+  .zlabel{font-size:10px;font-weight:600;color:#475569;white-space:nowrap;
+    text-shadow:0 1px 2px #fff,0 0 3px #fff,0 0 3px #fff;transform:translate(-50%,-140%);}
+  .legend{display:flex;gap:16px;align-items:center;font-size:12px;color:var(--muted);}
+  .legend .k{display:flex;align-items:center;gap:6px;}
+  .legend .d{width:11px;height:11px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #cbd5e1;}
+
+  /* Profile */
+  .profile{padding:20px;text-align:center;}
+  .ava{width:84px;height:84px;border-radius:50%;margin:0 auto;position:relative;
+    background:linear-gradient(135deg,#dbeafe,#bfdbfe);display:flex;align-items:center;justify-content:center;
+    border:3px solid var(--green);box-shadow:0 0 0 5px rgba(22,163,74,.12);}
+  .ava svg{width:48px;height:48px;color:#1e40af;opacity:.85}
+  .ava .dot{position:absolute;right:3px;bottom:3px;width:16px;height:16px;border-radius:50%;background:var(--green);border:3px solid #fff;}
+  .p-name{font-size:19px;font-weight:700;margin-top:11px;}
+  .p-sub{font-size:12px;color:var(--muted);margin-top:2px;}
+  .pill{display:inline-flex;align-items:center;gap:6px;margin-top:9px;font-size:12px;font-weight:700;
+    padding:4px 12px;border-radius:14px;background:rgba(22,163,74,.12);color:var(--green);}
+  .pill .d{width:7px;height:7px;border-radius:50%;background:currentColor;}
+  .metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:16px 18px;border-top:1px solid var(--line);}
+  .metric{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:10px 8px;text-align:center;}
+  .metric .l{font-size:11px;color:var(--muted);font-weight:600;}
+  .metric .v{font-size:22px;font-weight:800;margin-top:3px;line-height:1;}
+  .metric .v small{font-size:11px;color:#94a3b8;font-weight:600;}
+  .details{padding:4px 18px 16px;}
+  .drow{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px;}
+  .drow:last-child{border-bottom:none}
+  .drow .dl{color:var(--muted)} .drow .dv{font-weight:600}
+  .contact{display:flex;align-items:center;gap:8px;margin:10px 18px 18px;padding:11px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;font-size:13px;}
+  .contact .ph{width:30px;height:30px;border-radius:8px;background:#eff6ff;color:var(--blue);display:flex;align-items:center;justify-content:center;}
+
+  /* HR trend + baseline */
+  .trend{padding:16px 18px;}
+  .trend .row{display:flex;align-items:baseline;gap:14px;}
+  .trend .big{font-size:30px;font-weight:800;color:var(--green)}
+  .trend .big small{font-size:12px;color:var(--muted);font-weight:600;}
+  .trend .base{font-size:12px;color:var(--muted);}
+  svg.spark{width:100%;height:120px;display:block;margin-top:6px;}
+
+  /* Activity timeline */
+  .tl{padding:18px;}
+  .tl-bar{display:flex;height:38px;border-radius:9px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--line);}
+  .seg{position:relative}
+  .tl-ticks{display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-top:7px;}
+  .tl-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:12px;color:var(--muted);}
+  .tl-legend .k{display:flex;align-items:center;gap:6px}
+  .tl-legend .d{width:11px;height:11px;border-radius:3px}
+  .fallmark{position:absolute;top:-6px;left:0;font-size:13px;transform:translateX(-50%)}
+
+  /* Tables */
+  table{width:100%;border-collapse:collapse;}
+  thead th{font-size:11px;color:var(--muted);font-weight:600;text-align:left;padding:10px 18px;border-bottom:1px solid var(--line);}
+  tbody td{padding:11px 18px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle;}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#f8fafc}
+  .sev{display:inline-flex;width:18px;height:18px;border-radius:50%;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;}
+  .sev.crit{background:var(--red)} .sev.maj{background:var(--orange)} .sev.warn{background:var(--amber)}
+  .stat{font-size:12px;font-weight:700;padding:3px 10px;border-radius:8px;}
+  .stat.active{color:var(--red);background:#fef2f2}
+  .stat.cleared{color:var(--green);background:#f0fdf4}
+  .chip{font-size:12px;font-weight:700;padding:5px 12px;border-radius:9px;border:1px solid;cursor:pointer;}
+  .chip.dispatch{color:var(--blue);border-color:#bfdbfe;background:#eff6ff;}
+  .iconbtn{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:#fff;display:flex;align-items:center;justify-content:center;color:#64748b;cursor:pointer;}
+  .act{display:flex;align-items:center;gap:8px;}
+
+  /* Guardians */
+  .addbtn{font-size:13px;font-weight:700;color:var(--blue);background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;padding:7px 12px;cursor:pointer;}
+  .g-row{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--line);}
+  .g-row:last-child{border-bottom:none}
+  .g-dot{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 auto;}
+  .g-info{flex:1;min-width:0}
+  .g-nm{font-size:14px;font-weight:600}
+  .g-mail{font-size:11px;color:var(--muted)}
+  .g-act{display:flex;gap:8px;align-items:center}
+  .dispatch-btn{font-size:12px;font-weight:700;color:#fff;background:var(--blue);border:none;border-radius:8px;padding:7px 11px;cursor:pointer;}
+  .note{max-width:1340px;margin:0 auto 24px;padding:0 18px;color:var(--muted);font-size:12px;}
+</style>
+</head>
+<body>
+  <div class="appbar">
+    <div class="brand">🛡️ Wearable Guardian <small>· 照護戰情 Care Console</small></div>
+    <nav><a>⚙️ 設定</a></nav>
+  </div>
+
+  <div class="wrap">
+    <!-- Row A: Map + Profile (WHERE + WHO/NOW) -->
+    <div class="g2">
+      <div class="card">
+        <div class="card-h"><h3>即時位置 Live location · 陽明交大 光復校區</h3>
+          <div class="sub legend"><span class="k"><span class="d" style="background:var(--green)"></span>配戴者</span>
+            <span class="k"><span class="d" style="background:var(--blue)"></span>守護者</span>
+            <span class="k"><span class="d" style="background:#cbd5e1"></span>命名區域</span></div></div>
+        <div id="map"></div>
+      </div>
+
+      <div class="card">
+        <div class="profile">
+          <div class="ava">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 4.9-2.2 4.9-4.9S14.7 2.2 12 2.2 7.1 4.4 7.1 7.1 9.3 12 12 12zm0 2.4c-3.3 0-9.8 1.6-9.8 4.9v2.5h19.6v-2.5c0-3.3-6.5-4.9-9.8-4.9z"/></svg>
+            <span class="dot"></span>
+          </div>
+          <div class="p-name">王伯伯</div>
+          <div class="p-sub">配戴者 The resident · 在線 Online</div>
+          <div class="pill"><span class="d"></span> 狀態正常 Normal</div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><div class="l">心率 HR</div><div class="v" style="color:var(--green)">78<small>bpm</small></div></div>
+          <div class="metric"><div class="l">情境</div><div class="v" style="font-size:16px;padding-top:5px">正常</div></div>
+          <div class="metric"><div class="l">風險</div><div class="v" style="color:var(--green);font-size:17px;padding-top:5px">低</div></div>
+        </div>
+        <div class="details">
+          <div class="drow"><span class="dl">目前位置 Location</span><span class="dv" id="p-loc">—</span></div>
+          <div class="drow"><span class="dl">年齡 / 性別</span><span class="dv">74 · 男</span></div>
+          <div class="drow"><span class="dl">慢性病 History</span><span class="dv">高血壓</span></div>
+          <div class="drow"><span class="dl">手錶電量 Battery</span><span class="dv">🔋 72%</span></div>
+          <div class="drow"><span class="dl">最後同步 Sync</span><span class="dv">8 分鐘前</span></div>
+        </div>
+        <div class="contact"><span class="ph">📞</span><div><div style="color:var(--muted);font-size:11px">緊急聯絡 Emergency contact</div><b>王小明 · 兒子 · 0912-345-678</b></div></div>
+      </div>
+    </div>
+
+    <!-- Row B: Today's aggregate stats (NEW, not current-HR dup) -->
+    <div class="kpis">
+      <div class="kpi"><div class="top"><span class="l">今日跌倒</span><span class="ic" style="background:rgba(220,38,38,.12);color:var(--red)">⚠</span></div><div class="v">2</div><div class="t">最近 14:30 · 已恢復</div></div>
+      <div class="kpi"><div class="top"><span class="l">平均恢復時間</span><span class="ic" style="background:rgba(22,163,74,.12);color:var(--green)">⏱</span></div><div class="v">42<small>s</small></div><div class="t">自跌倒到站起</div></div>
+      <div class="kpi"><div class="top"><span class="l">自行恢復率</span><span class="ic" style="background:rgba(37,99,235,.12);color:var(--blue)">↺</span></div><div class="v">100<small>%</small></div><div class="t">未需升級 SOS</div></div>
+      <div class="kpi"><div class="top"><span class="l">今日活動時間</span><span class="ic" style="background:rgba(8,145,178,.12);color:var(--cyan)">🚶</span></div><div class="v">3.2<small>hr</small></div><div class="t">活動 vs 靜止 = 3.2 : 6.1</div></div>
+    </div>
+
+    <!-- Row C: HR trend+baseline | Activity timeline (NEW) -->
+    <div class="g11">
+      <div class="card">
+        <div class="card-h"><h3>心率趨勢 vs 個人基線 HR vs baseline</h3><div class="sub">最後 12 小時</div></div>
+        <div class="trend">
+          <div class="row"><span class="big">78 <small>bpm 目前</small></span><span class="base">個人基線 67 · 最高 121 (14:30 跌倒)</span></div>
+          <svg class="spark" viewBox="0 0 600 120" preserveAspectRatio="none">
+            <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#16a34a" stop-opacity=".22"/><stop offset="1" stop-color="#16a34a" stop-opacity="0"/></linearGradient></defs>
+            <line x1="0" y1="84" x2="600" y2="84" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 5"/>
+            <text x="6" y="79" font-size="10" fill="#94a3b8">基線 67</text>
+            <path d="M0,80 L50,78 L100,82 L150,74 L200,80 L250,70 L300,16 L320,40 L360,60 L420,66 L480,72 L540,70 L600,74" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M0,80 L50,78 L100,82 L150,74 L200,80 L250,70 L300,16 L320,40 L360,60 L420,66 L480,72 L540,70 L600,74 L600,120 L0,120 Z" fill="url(#g)"/>
+            <circle cx="300" cy="16" r="4" fill="var(--red)"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h3>情境時間軸 Activity timeline</h3><div class="sub">今日 08:00 – 20:00</div></div>
+        <div class="tl">
+          <div class="tl-bar">
+            <div class="seg" style="flex:3;background:var(--green)" title="08–11 正常/散步"></div>
+            <div class="seg" style="flex:1;background:var(--cyan)" title="11–12 坐(午餐)"></div>
+            <div class="seg" style="flex:2;background:var(--purple)" title="12–14 躺(午睡)"></div>
+            <div class="seg" style="flex:3;background:var(--green)" title="14–17 正常"><span class="fallmark" style="left:16%">🔴</span></div>
+            <div class="seg" style="flex:1;background:var(--cyan)" title="17–18 坐"></div>
+            <div class="seg" style="flex:2;background:var(--green)" title="18–20 正常"></div>
+          </div>
+          <div class="tl-ticks"><span>08</span><span>10</span><span>12</span><span>14</span><span>16</span><span>18</span><span>20</span></div>
+          <div class="tl-legend">
+            <span class="k"><span class="d" style="background:var(--green)"></span>正常/走動</span>
+            <span class="k"><span class="d" style="background:var(--cyan)"></span>坐下</span>
+            <span class="k"><span class="d" style="background:var(--purple)"></span>躺下</span>
+            <span class="k"><span class="d" style="background:var(--red)"></span>🔴 跌倒事件</span>
+          </div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);">
+            活動量偵測來自 IMU + 個人基線；午睡 12–14 與 14:30 跌倒已標出。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row D: Alarm history (same person) | Guardians + dispatch -->
+    <div class="g2">
+      <div class="card">
+        <div class="card-h"><h3>告警歷史 Alarm history · 王伯伯</h3><div class="sub">🕑 最後 30 天</div></div>
+        <table>
+          <thead><tr><th>類型</th><th>位置</th><th>時間</th><th>嚴重度</th><th>狀態</th><th>動作</th></tr></thead>
+          <tbody>
+            <tr><td>倒地 Collapse</td><td class="loc" data-lat="24.7879" data-lon="120.9966"></td><td>2 分鐘前</td><td><span class="sev crit">!</span></td><td><span class="stat active">處理中 Active</span></td>
+              <td><div class="act"><span class="chip dispatch">🚑 指派守護者</span></div></td></tr>
+            <tr><td>疑似跌倒 Fall?</td><td class="loc" data-lat="24.7869" data-lon="120.9972"></td><td>今天 09:14</td><td><span class="sev warn">!</span></td><td><span class="stat cleared">已恢復 Cleared</span></td>
+              <td><div class="act"><span class="iconbtn">↗</span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h3>守護者 Guardians</h3><button class="addbtn">＋ 新增</button></div>
+        <div>
+          <div class="g-row">
+            <span class="g-dot" style="background:rgba(22,163,74,.12);border:2px solid var(--green);color:var(--green)">G1</span>
+            <div class="g-info"><div class="g-nm">guardian1</div><div class="g-mail">值班中 · 距配戴者 120 m</div></div>
+            <div class="g-act"><button class="dispatch-btn">指派前往</button><span class="iconbtn">✏️</span></div>
+          </div>
+          <div class="g-row">
+            <span class="g-dot" style="background:rgba(37,99,235,.12);border:2px solid var(--blue);color:var(--blue)">G2</span>
+            <div class="g-info"><div class="g-nm">guardian2</div><div class="g-mail">值班中 · 距配戴者 260 m</div></div>
+            <div class="g-act"><button class="dispatch-btn">指派前往</button><span class="iconbtn">✏️</span></div>
+          </div>
+        </div>
+        <div style="padding:12px 18px;border-top:1px solid var(--line);font-size:11px;color:var(--blue)">🔔 告警觸發 → 自動通知派發給值班守護者</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">設計稿 mockup · 移除頂部重複面板;每張卡各有獨立用途。新增:今日統計、心率 vs 個人基線、情境時間軸、住民資料(年齡/慢性病/緊急聯絡)、裝置電量、守護者距離+指派。
+  地圖中心＝交大,綠＝配戴者、藍＝守護者、灰圈＝命名區域;位置欄 GPS→地名。</div>
+
+<script>
+  var NYCU = [24.78686, 120.99681];
+  var map = L.map('map', {zoomControl:true, scrollWheelZoom:true}).setView(NYCU, 16);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'© OpenStreetMap'}).addTo(map);
+  function pin(lat, lon, color, label, open){
+    var m=L.circleMarker([lat,lon],{radius:11,color:'#fff',weight:3,fillColor:color,fillOpacity:1}).addTo(map);
+    m.bindPopup(label); if(open) m.openPopup(); return m;
+  }
+  pin(24.78686,120.99681,'#16a34a','<b>🟢 王伯伯</b><br>配戴者 · 78 bpm · 正常',true);
+  pin(24.78820,120.99870,'#2563eb','<b>📱 guardian1</b><br>守護者 · 值班中');
+  pin(24.78540,120.99480,'#2563eb','<b>📱 guardian2</b><br>守護者 · 值班中');
+
+  // ~41 NYCU Guangfu-campus landmarks at OpenStreetMap-accurate coordinates
+  // (kept in sync with scripts/provision_thingsboard.py ZONES).
+  var ZONES=[
+    {n:'工程一館',lat:24.78871,lon:120.99798},{n:'工程三館',lat:24.78697,lon:120.99736},
+    {n:'工程四館',lat:24.78697,lon:120.99678},{n:'工程五館',lat:24.78587,lon:120.99740},
+    {n:'工程六館',lat:24.78597,lon:120.99600},{n:'科學一館',lat:24.78801,lon:120.99673},
+    {n:'科學二館',lat:24.78903,lon:120.99656},{n:'綜合一館',lat:24.78466,lon:120.99731},
+    {n:'管理一館',lat:24.78762,lon:121.00053},{n:'管理二館',lat:24.78533,lon:120.99850},
+    {n:'人社一館',lat:24.78740,lon:120.99867},{n:'人社二館',lat:24.78706,lon:121.00002},
+    {n:'電子資訊大樓',lat:24.78659,lon:121.00178},{n:'田家炳光電大樓',lat:24.78743,lon:120.99586},
+    {n:'交映樓',lat:24.78676,lon:120.99594},{n:'計網中心',lat:24.78790,lon:120.99779},
+    {n:'浩然圖書館',lat:24.78645,lon:120.99842},{n:'行政大樓',lat:24.78779,lon:120.99913},
+    {n:'中正堂',lat:24.78838,lon:120.99851},{n:'學生活動中心',lat:24.78620,lon:121.00037},
+    {n:'體育館',lat:24.78868,lon:120.99582},{n:'游泳池',lat:24.79000,lon:120.99587},
+    {n:'綜合球館',lat:24.78982,lon:120.99509},{n:'棒壘球場',lat:24.78508,lon:120.99617},
+    {n:'網球場',lat:24.78715,lon:120.99470},{n:'第一餐廳',lat:24.78670,lon:120.99968},
+    {n:'第二餐廳',lat:24.78912,lon:120.99698},{n:'竹軒宿舍',lat:24.78953,lon:120.99818},
+    {n:'研一舍',lat:24.78979,lon:120.99747},{n:'研三舍',lat:24.78374,lon:120.99708},
+    {n:'七舍',lat:24.78573,lon:120.99941},{n:'八舍',lat:24.78528,lon:120.99967},
+    {n:'九舍',lat:24.78985,lon:120.99672},{n:'十舍',lat:24.79000,lon:120.99673},
+    {n:'十一舍',lat:24.79007,lon:120.99744},{n:'十二舍',lat:24.78423,lon:120.99564},
+    {n:'十三舍',lat:24.78385,lon:120.99626},{n:'女二舍',lat:24.78456,lon:120.99964},
+    {n:'百川書院',lat:24.78385,lon:120.99708},{n:'正門(北大門)',lat:24.78924,lon:120.99993},
+    {n:'南大門',lat:24.78452,lon:120.99340}];
+  var ZONE_R=130;
+  function dist(la1,lo1,la2,lo2){var R=6371000,dLa=(la2-la1)*Math.PI/180,dLo=(lo2-lo1)*Math.PI/180,
+    a=Math.sin(dLa/2)**2+Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
+  function zoneOf(lat,lon){var best=null,bd=1e12;ZONES.forEach(function(z){var d=dist(lat,lon,z.lat,z.lon);if(d<bd){bd=d;best=z;}});
+    return (bd<=ZONE_R)?best.n:('校園周邊 '+lat.toFixed(4)+', '+lon.toFixed(4));}
+  ZONES.forEach(function(z){
+    L.circle([z.lat,z.lon],{radius:ZONE_R,color:'#94a3b8',weight:1,fillColor:'#94a3b8',fillOpacity:.05}).addTo(map);
+    L.marker([z.lat,z.lon],{icon:L.divIcon({className:'zlabel',html:z.n,iconSize:[0,0]})}).addTo(map);
+  });
+  document.querySelectorAll('.loc').forEach(function(td){
+    var la=parseFloat(td.dataset.lat),lo=parseFloat(td.dataset.lon);
+    td.innerHTML='<div style="font-weight:600">'+zoneOf(la,lo)+'</div>'+
+      '<div style="font-size:11px;color:#94a3b8">📍 '+la.toFixed(4)+', '+lo.toFixed(4)+'</div>';
+  });
+  var pl=document.getElementById('p-loc'); if(pl) pl.textContent=zoneOf(24.78686,120.99681);
+</script>
+</body>
+</html>

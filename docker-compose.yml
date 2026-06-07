@@ -1,0 +1,60 @@
+services:
+  postgres:
+    restart: always
+    image: "postgres:16"
+    ports:
+      - "5432"
+    environment:
+      POSTGRES_DB: thingsboard
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  thingsboard-ce:
+    restart: always
+    image: "thingsboard/tb-node:4.3.1.1"
+    ports:
+      - "18080:8080"
+      - "7070:7070"
+      - "1883:1883"
+      - "8883:8883"
+      - "5683-5688:5683-5688/udp"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    environment:
+      TB_SERVICE_ID: tb-ce-node
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/thingsboard
+    depends_on:
+      - postgres
+
+  # Edge inference service. In the Azure IoT Edge flow this same container is
+  # deployed as the `postureApi` IoT Edge module (built/pushed by
+  # cloud/azure/build_and_push.ps1, run by cloud/azure/run_edge.ps1 via the
+  # iotedgehubdev simulator), so it is NOT part of the default `docker compose up`
+  # (which just brings up Postgres + ThingsBoard).
+  # To run it directly with plain Compose instead (no Azure), bring it up explicitly:
+  #     docker compose --profile local-edge up -d --build posture-api
+  posture-api:
+    profiles: ["local-edge"]
+    restart: always
+    build:
+      context: ./posture-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - thingsboard-ce
+    environment:
+      TB_API_BASE: http://thingsboard-ce:8080
+      TB_DEVICE_TOKEN: ${TB_DEVICE_TOKEN:-}
+      TB_MQTT_HOST: thingsboard-ce
+      TB_MQTT_PORT: "1883"
+    volumes:
+      - ./data:/data
+
+volumes:
+  postgres-data:
+    name: tb-postgres-data
+    driver: local
