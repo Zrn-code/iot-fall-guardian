@@ -257,9 +257,12 @@ class _RecorderScreenState extends State<RecorderScreen> {
           _lastHeartbeatError = null;
         });
       } else {
-        setState(() => _lastHeartbeatError = _tbToken.isEmpty ? 'no_tb' : 'tb_err');
+        final tag = _tbToken.isEmpty ? 'no_tb' : 'tb_err';
+        _log('HB', 'heartbeat _postTb failed -> tag=$tag');
+        setState(() => _lastHeartbeatError = tag);
       }
     } on TimeoutException {
+      _log('HB', 'heartbeat TIMEOUT');
       if (mounted) setState(() => _lastHeartbeatError = 'timeout');
     } catch (e) {
       if (!mounted) return;
@@ -269,6 +272,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
               msg.contains('SocketException'))
           ? 'net'
           : 'err';
+      _log('HB', 'heartbeat FAILED tag=$tag : $msg');
       setState(() => _lastHeartbeatError = tag);
     }
   }
@@ -363,30 +367,45 @@ class _RecorderScreenState extends State<RecorderScreen> {
   /// Post HR + GPS (+ extra fields like a situation result) straight to TB.
   /// Returns true on a 2xx. This is the wearer's only uplink to the cloud now.
   Future<bool> _postTb(Map<String, dynamic> extra) async {
-    if (_tbToken.isEmpty) return false;
+    if (_tbToken.isEmpty) {
+      _log('TB', 'skip POST: tbToken empty (returning false -> "err"/no_tb)');
+      return false;
+    }
     final pos = _latestPosition;
+    final body = jsonEncode({
+      'worker_id': _workerId,
+      if (pos != null) ...{
+        'lat': pos.latitude,
+        'lon': pos.longitude,
+        'accuracy_m': pos.accuracy,
+      },
+      if (_lastBgBpm != null) 'bpm': _lastBgBpm,
+      if (_batteryPct != null) 'battery': _batteryPct,
+      if (_charging != null) 'charging': _charging,
+      'worn': _worn,
+      ...extra,
+    });
     try {
       final r = await http
           .post(
             _tbUri,
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'worker_id': _workerId,
-              if (pos != null) ...{
-                'lat': pos.latitude,
-                'lon': pos.longitude,
-                'accuracy_m': pos.accuracy,
-              },
-              if (_lastBgBpm != null) 'bpm': _lastBgBpm,
-              if (_batteryPct != null) 'battery': _batteryPct,
-              if (_charging != null) 'charging': _charging,
-              'worn': _worn,
-              ...extra,
-            }),
+            body: body,
           )
           .timeout(const Duration(seconds: 4));
-      return r.statusCode >= 200 && r.statusCode < 300;
-    } catch (_) {
+      final ok = r.statusCode >= 200 && r.statusCode < 300;
+      if (ok) {
+        _log('TB', 'POST $_tbUri -> ${r.statusCode} OK  keys=${extra.keys.toList()}');
+      } else {
+        // Non-2xx: TB rejected it. Body usually says why (bad token -> 401,
+        // unknown device -> 401/404, malformed -> 400).
+        _log('TB', 'POST $_tbUri -> ${r.statusCode} FAIL  body="${r.body}"  sent=$body');
+      }
+      return ok;
+    } catch (e) {
+      // Network-level failure (host unreachable / refused / timeout). THIS is
+      // what was previously swallowed and surfaced only as "err" on the chip.
+      _log('TB', 'POST $_tbUri threw: $e');
       return false;
     }
   }
@@ -427,13 +446,33 @@ class _RecorderScreenState extends State<RecorderScreen> {
     });
   }
 
+  // --- Debug logging -------------------------------------------------------
+  // Tagged, greppable console output. Visible in `flutter run`, `flutter logs`,
+  // or `adb logcat | grep guardian`. Filter by sub-tag, e.g. grep "\[TB\]".
+  void _log(String tag, String msg) => debugPrint('[guardian][$tag] $msg');
+
+  // Never dump the full device token to logcat; show just enough to confirm
+  // which one is loaded (length + last 4 chars).
+  String _maskToken(String t) =>
+      t.isEmpty ? '<EMPTY>' : '…${t.substring(t.length - 4)} (len=${t.length})';
+
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
+    // Treat a stored-but-empty token as "unset" so the demo default below still
+    // applies even if a prior Save wrote '' into shared_preferences (which would
+    // otherwise shadow _defaultTbToken — `'' ?? x` keeps the empty string).
+    final storedTb = prefs.getString('tbToken');
     setState(() {
       _evaluateUrl = prefs.getString('evaluateUrl') ?? _defaultEvaluateUrl;
       _workerId = prefs.getString('workerId') ?? _workerId;
-      _tbToken = prefs.getString('tbToken') ?? _defaultTbToken;
+      _tbToken = (storedTb == null || storedTb.isEmpty) ? _defaultTbToken : storedTb;
     });
+    _log('CFG', 'loaded prefs: inferUrl=$_evaluateUrl  workerId=$_workerId  '
+        'tbToken=${_maskToken(_tbToken)}  tbTelemetryUri=${_tbToken.isEmpty ? "<no token>" : _tbUri}');
+    if (_tbToken.isEmpty) {
+      _log('CFG', 'WARNING tbToken is empty -> every _postTb() returns false '
+          '(chip shows "err"/no_tb). Set it in the in-app settings dialog.');
+    }
   }
 
   Future<void> _savePrefs() async {
@@ -529,13 +568,16 @@ class _RecorderScreenState extends State<RecorderScreen> {
           )
           .timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) {
+        _log('INFER', 'POST $_inferUri -> ${resp.statusCode} FAIL  body="${resp.body}"');
         throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
       }
+      _log('INFER', 'POST $_inferUri -> 200 OK (${samples.length} imu, ${hrSamples.length} hr)');
       final j = jsonDecode(resp.body) as Map<String, dynamic>;
       final situation = (j['situation'] as String?) ?? 'NORMAL';
       final conf = (j['situation_confidence'] as num?)?.toDouble() ?? 0;
       final feats = (j['features'] as Map?) ?? const {};
       final escalation = _localEscalation(situation, feats); // UI hint only
+      _log('INFER', 'result: situation=$situation conf=${conf.toStringAsFixed(2)} escalation=$escalation');
 
       // Step 2: post the situation + features + GPS straight to ThingsBoard.
       // The GuardianRules rule chain computes the real escalation, raises /
@@ -584,6 +626,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
           break;
       }
     } on TimeoutException {
+      _log('INFER', 'TIMEOUT talking to inference server $_inferUri (>10s)');
       if (mounted) setState(() => _lastHeartbeatError = 'timeout');
     } catch (e) {
       if (!mounted) return;
@@ -593,6 +636,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
               msg.contains('SocketException'))
           ? 'net'
           : 'err';
+      _log('INFER', 'FAILED tag=$tag : $msg');
       setState(() => _lastHeartbeatError = tag);
     } finally {
       _inferInFlight = false;
