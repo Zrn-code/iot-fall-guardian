@@ -281,7 +281,7 @@ code{font-family:var(--mono);font-size:.86em;background:var(--s2);border:1px sol
 .dbar .dl{font-size:18px;font-weight:600}
 .dbar .track{height:26px;background:var(--s2);border-radius:8px;overflow:hidden;border:1px solid var(--line)}
 .dbar .fillb{height:100%;border-radius:7px}.dbar .dv{font-family:var(--mono);font-size:17px;text-align:right;color:var(--soft)}
-.tax{display:flex;flex-direction:column;gap:16px;margin-top:4px;flex:1;justify-content:center}
+.tax{display:flex;flex-direction:column;gap:13px;margin-top:8px}
 .taxrow{display:grid;grid-template-columns:78px 1fr;gap:14px;align-items:start}
 .taxlab{display:flex;flex-direction:column;gap:2px;padding-top:3px}
 .taxlab b{font-size:17px;font-weight:800;line-height:1}.taxlab .tn{font-family:var(--mono);font-size:12.5px;color:var(--soft)}
@@ -297,13 +297,17 @@ code{font-family:var(--mono);font-size:.86em;background:var(--s2);border:1px sol
 .provstats .ps{text-align:center;background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:8px 15px;min-width:92px}
 .provstats .ps b{display:block;font-size:20px;font-weight:900;letter-spacing:-.02em;line-height:1}
 .provstats .ps span{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:3px;display:block}
-.curgrid{display:flex;flex-direction:column;gap:11px;margin-top:12px;flex:1}
-.curitem{display:flex;gap:14px;align-items:center;flex:1;background:var(--paper);border:1px solid var(--line-2);border-radius:13px;padding:14px 18px;box-shadow:var(--sh-1)}
-.curitem b{font-size:16.5px;font-weight:800;display:block;line-height:1.2}
-.curitem .cd{font-size:13.5px;color:var(--soft);line-height:1.42;margin-top:3px}
+.curgrid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:11px;margin-top:11px;flex:1}
+.curitem{display:flex;gap:12px;align-items:center;background:var(--paper);border:1px solid var(--line-2);border-radius:12px;padding:13px 15px;box-shadow:var(--sh-1)}
+.curitem b{font-size:15.5px;font-weight:800;display:block;line-height:1.2}
+.curitem .cd{font-size:12.5px;color:var(--soft);line-height:1.4;margin-top:3px}
 .xline{font-family:var(--mono);font-size:14px;color:var(--soft);margin-top:14px;text-align:center}
 .xline b{color:var(--ink);font-weight:700}.xline em{font-style:normal;color:var(--accent);font-weight:700}
 .splitbar{display:flex;height:44px;border-radius:10px;overflow:hidden;border:1px solid var(--line);margin-top:14px}
+.pipestrip{display:flex;align-items:center;gap:14px;padding:14px 22px}
+.pipestrip .ct2{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);letter-spacing:.05em;flex:none}
+.pstep{display:flex;align-items:center;gap:11px;font-size:15.5px;font-weight:700;background:var(--paper);border:1px solid var(--line-2);border-radius:11px;padding:9px 15px;flex:1;box-shadow:var(--sh-1)}
+.parr{color:var(--line-2);font-size:18px;font-weight:700;flex:none}
 .splitbar .sf{display:flex;align-items:center;justify-content:center;color:#fff;font-size:13.5px;font-weight:700;font-family:var(--mono);white-space:nowrap}
 
 /* mlops */
@@ -1030,31 +1034,31 @@ code{font-family:var(--mono);font-size:.86em;background:var(--s2);border:1px sol
           <div class="ps"><b>12</b><span>感測通道</span></div>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1.08fr;gap:20px;align-items:stretch;flex:1">
-        <div class="card s1" style="display:flex;flex-direction:column">
-          <div class="ct" style="font-size:19px">我們做了<span style="color:var(--accent)">大幅篩選與重建</span></div>
-          <div class="curgrid">
-            <div class="curitem"><div class="chip danger"><svg class="ic"><use href="#i-shield"/></svg></div><div><b>篩除雜訊通道</b><div class="cd">丟 3 環境通道 ＋ yaw → 只留 6 軸 IMU</div></div></div>
-            <div class="curitem"><div class="chip accent"><svg class="ic"><use href="#i-activity"/></svg></div><div><b>重力重建</b><div class="cd">線加速度 ＋ pitch/roll → 還原重力向量</div></div></div>
-            <div class="curitem"><div class="chip data"><svg class="ic"><use href="#i-layers"/></svg></div><div><b>標籤 10 → 2 類</b><div class="cd">5 種跌倒併 FALL；坐／躺／正常 → 非跌倒</div></div></div>
-            <div class="curitem"><div class="chip edge"><svg class="ic"><use href="#i-chip"/></svg></div><div><b>手工特徵萃取</b><div class="cd">傾角／撞擊／jerk 等 → 27 維判別量</div></div></div>
-          </div>
-          <div class="xline">12 通道 → <b>6 軸 IMU</b> → <em>27 維特徵</em></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:stretch;flex:1">
+        <div class="card s1" style="display:flex;flex-direction:column;padding:16px 18px">
+          <div class="ct" style="font-size:18px">一筆「跌倒」長這樣 · 加速度大小 |acc|</div>
+          <div class="fig" style="flex:1;margin-top:10px"><img src="img/signal_examples.png" alt="跌倒訊號範例"></div>
+          <div class="figcap">FALL ＝ 撞擊尖峰（衝到 ~9 g）；NORMAL 貼著 1 g 重力線</div>
         </div>
-        <div class="card s1" style="display:flex;flex-direction:column">
-          <div class="ct" style="font-size:19px">原始 10 動作標籤 → 跌倒 vs 非跌倒</div>
-          <div class="tax">
-            <div class="taxrow">
-              <div class="taxlab"><b style="color:var(--danger)">跌倒</b><span class="tn">×5</span></div>
-              <div class="taxchips"><span class="tc fall">fall_forward</span><span class="tc fall">fall_backward</span><span class="tc fall">fall_side_left</span><span class="tc fall">fall_side_right</span><span class="tc fall">fall_slump</span></div>
+        <div style="display:flex;flex-direction:column;gap:18px;min-height:0">
+          <div class="card s1">
+            <div class="ct" style="font-size:18px">原始 10 動作標籤 → 跌倒 vs 非跌倒</div>
+            <div class="tax">
+              <div class="taxrow"><div class="taxlab"><b style="color:var(--danger)">跌倒</b><span class="tn">×5</span></div><div class="taxchips"><span class="tc fall">fall_forward</span><span class="tc fall">fall_backward</span><span class="tc fall">fall_side_left</span><span class="tc fall">fall_side_right</span><span class="tc fall">fall_slump</span></div></div>
+              <div class="taxrow"><div class="taxlab"><b style="color:var(--edge)">非跌倒</b><span class="tn">×5</span></div><div class="taxchips"><span class="tc warn">sit</span><span class="tc warn">lie_down</span><span class="tc warn">bend</span><span class="tc">stand</span><span class="tc">walk</span></div></div>
             </div>
-            <div class="taxrow">
-              <div class="taxlab"><b style="color:var(--edge)">非跌倒</b><span class="tn">×5</span></div>
-              <div class="taxchips"><span class="tc warn">sit</span><span class="tc warn">lie_down</span><span class="tc warn">bend</span><span class="tc">stand</span><span class="tc">walk</span></div>
+            <div class="splitbar"><span class="sf" style="width:47%;background:var(--danger)">跌倒 235</span><span class="sf" style="width:53%;background:var(--edge)">非跌倒 265</span></div>
+            <p class="muted" style="font-size:12px;margin-top:9px"><b style="color:var(--warn)">坐／躺／彎腰</b> ＝ 像跌倒的假性動作（橘）</p>
+          </div>
+          <div class="card s1" style="flex:1;display:flex;flex-direction:column">
+            <div class="ct" style="font-size:18px">清理重建 · <span style="color:var(--accent)">12 通道 → 6 軸 → 27 維</span></div>
+            <div class="curgrid">
+              <div class="curitem"><div class="chip danger sm"><svg class="ic"><use href="#i-shield"/></svg></div><div><b>篩除雜訊通道</b><div class="cd">丟 3 環境＋yaw → 6 軸 IMU</div></div></div>
+              <div class="curitem"><div class="chip accent sm"><svg class="ic"><use href="#i-activity"/></svg></div><div><b>重力重建</b><div class="cd">線加速度＋pitch/roll → 還原重力</div></div></div>
+              <div class="curitem"><div class="chip data sm"><svg class="ic"><use href="#i-layers"/></svg></div><div><b>標籤 10 → 2 類</b><div class="cd">5 跌倒→FALL；坐躺正常→非跌倒</div></div></div>
+              <div class="curitem"><div class="chip edge sm"><svg class="ic"><use href="#i-chip"/></svg></div><div><b>手工特徵</b><div class="cd">傾角／撞擊／jerk → 27 維</div></div></div>
             </div>
           </div>
-          <div class="splitbar"><span class="sf" style="width:47%;background:var(--danger)">跌倒 235</span><span class="sf" style="width:53%;background:var(--edge)">非跌倒 265</span></div>
-          <p class="muted" style="font-size:12.5px;margin-top:10px;line-height:1.5"><b style="color:var(--warn)">坐／躺／彎腰</b>是「像跌倒」的假性動作（橘）；5 種跌倒涵蓋前後左右＋癱倒——模型把兩群分乾淨。</p>
         </div>
       </div>
     </div>
