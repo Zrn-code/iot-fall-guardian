@@ -124,8 +124,9 @@ class _TrainerScreenState extends State<TrainerScreen> {
     try {
       await _hrChannel.invokeMethod('requestHeartRatePermission');
       await _hrChannel.invokeMethod('startHeartRate');
-    } catch (_) {
+    } catch (e) {
       // best-effort; the watch may not expose Health Services in the emulator
+      _log('heart-rate unavailable: $e');
     }
   }
 
@@ -171,17 +172,32 @@ class _TrainerScreenState extends State<TrainerScreen> {
       final stats = (j['stats'] as Map?) ?? const {};
       if (!mounted) return;
       setState(() {
-        _stats = stats.map((k, v) => MapEntry(k.toString(), (v as num?)?.toInt() ?? 0));
+        // The server's LabelStats also carries non-numeric fields such as
+        // `last_recorded_at` (a String). Only keep numeric counts here so a
+        // String value never gets force-cast to num.
+        _stats = {
+          for (final e in stats.entries)
+            if (e.value is num) e.key.toString(): (e.value as num).toInt(),
+        };
         _totalRecords = (stats['total_records'] as num?)?.toInt() ?? 0;
         _statsLoading = false;
       });
-    } catch (e) {
+      _log('stats ok · total=$_totalRecords · $_stats');
+    } catch (e, st) {
+      _log('fetchStats FAILED: $e', st);
       if (!mounted) return;
       setState(() {
         _statsLoading = false;
         _statsError = _shortErr(e);
       });
     }
+  }
+
+  // Tagged console logging so events show up in `flutter run` / `flutter logs`.
+  // debugPrint is rate-limited and stripped from release builds.
+  void _log(String msg, [StackTrace? st]) {
+    debugPrint('[trainer] $msg');
+    if (st != null) debugPrint(st.toString());
   }
 
   String _shortErr(Object e) {
@@ -284,7 +300,8 @@ class _TrainerScreenState extends State<TrainerScreen> {
 
     try {
       await _uploadRecord();
-    } catch (e) {
+    } catch (e, st) {
+      _log('upload FAILED: $e', st);
       if (!mounted) return;
       setState(() {
         _stage = TrainerStage.error;
@@ -306,6 +323,8 @@ class _TrainerScreenState extends State<TrainerScreen> {
         },
       ],
     });
+    _log('upload → ${_api('/api/training')} · ${_label.key} · '
+        'imu=${_imuBuffer.length} hr=${_hrBuffer.length}');
     final r = await http
         .post(
           _api('/api/training'),
@@ -314,8 +333,9 @@ class _TrainerScreenState extends State<TrainerScreen> {
         )
         .timeout(const Duration(seconds: 12));
     if (r.statusCode < 200 || r.statusCode >= 300) {
-      throw Exception('HTTP ${r.statusCode}');
+      throw Exception('HTTP ${r.statusCode}: ${r.body}');
     }
+    _log('upload ok · HTTP ${r.statusCode}');
     // Optimistic local bump so the count updates instantly, then refresh.
     if (!mounted) return;
     setState(() {

@@ -207,8 +207,10 @@ RESIDENT_PROFILE = {
 def compute_today_stats(client: TbClient, device_id: str) -> dict:
     """Compute the KPI strip from REAL data (not hardcoded):
       - falls          = # fall/collapse alarms in the last 24h
-      - avg_recovery_s = mean (clearTs − startTs) of cleared fall alarms
-      - self_recovery  = % of fall alarms that cleared (no lingering escalation)
+      - avg_recovery_s = mean (clearTs − startTs) of cleared fall alarms — now
+                         time-to-resolution, since alarms only clear when a
+                         guardian resolves them (no auto-clear on recovery)
+      - self_recovery  = % of fall alarms that have been resolved (cleared)
       - active_hours   = non-fall time from the seeded situation_code trace (12h)
     """
     now = int(time.time() * 1000)
@@ -506,8 +508,11 @@ if (typeof msg.situation !== 'undefined') {
     msg.zone = _zoneOf(+msg.lat, +msg.lon);
   }
 
-  // RECOVERY: situation back to NORMAL -> clear lingering hazard state so the
-  // map/cards turn green again (the ClearAlarm branch handles the alarms).
+  // RECOVERY: situation back to NORMAL only refreshes the *live* state so the
+  // map / wearer cards turn green again. It does NOT clear any alarm — an open
+  // fall incident stays ACTIVE until a guardian resolves it in the console, so
+  // it can never vanish before anyone sees it. `recovered` lets the console
+  // badge a still-open alarm as "已自行恢復 (wearer has since stood up)".
   if (sit === 'NORMAL') {
     msg.recovered = true;
     msg.last_recovery_at = new Date().getTime();
@@ -528,21 +533,38 @@ def _node(name: str, type_: str, x: int, y: int, config: dict) -> dict:
     }
 
 
-def build_rule_chain_metadata(chain_id: str) -> dict:
+def build_rule_chain_metadata(
+    chain_id: str,
+    *,
+    fcm_relay_url: str = "",
+    fcm_relay_secret: str = "",
+) -> dict:
     """Build the GuardianRules metadata — the orchestration brain.
 
-    Topology (TB does escalation, alarms, clearing, delayed upgrade, ack):
+    Topology (TB does escalation, alarms, delayed upgrade, ack):
         Input → MsgTypeSwitch
            ├ Post telemetry → JS Transform (computes escalation) → Save Timeseries
            │     ├→ Filter SOS_COLLAPSE → Alarm CRITICAL
            │     ├→ Filter ASK_OK       → Alarm WARNING → Delay 20s → Re-check
            │     │                                          → still not OK → Alarm CRITICAL
-           │     ├→ Filter situation==NORMAL → Clear MedicalCollapse/FallSuspected
            │     └→ Filter ack_seen    → save rescue_state + Acknowledge alarm
            └ Post attributes → Save Client Attributes
 
+    Alarm LIFECYCLE — alarms are NEVER auto-cleared by the rule chain. A fall
+    raises an alarm that stays ACTIVE until a human (guardian console / TB
+    operator) explicitly resolves it. When the wearer recovers (situation back
+    to NORMAL) the JS transform only flips the *live* state green on the map /
+    cards; the open incident remains in the alarm list so it can't silently
+    vanish before anyone sees it. (Earlier versions cleared on the first NORMAL
+    telemetry, which made alarms disappear within ~5 s of a fall.)
+
     Connections are wired by node NAME (see `idx` below), so adding/removing a
     node never requires renumbering integer indices.
+
+    When `fcm_relay_secret` is set, every alarm node's *Created* output (never
+    Updated — that's the natural de-dup) also POSTs the alarm to the local
+    fcm_relay.py, which pushes an FCM notification so guardians get a system
+    notification even with the phone app closed.
     """
     nodes = []
 
@@ -713,34 +735,13 @@ def build_rule_chain_metadata(chain_id: str) -> dict:
         },
     ))
 
-    # ----- B1: recovery -> clear alarms (no lingering red after standing up) -----
-
-    # Filter: situation == NORMAL (recovered)
-    nodes.append(_node(
-        "Filter: situation==NORMAL",
-        "org.thingsboard.rule.engine.filter.TbJsFilterNode",
-        910, 700,
-        {"jsScript": "return msg.situation === 'NORMAL';"},
-    ))
-
-    def _clear(name: str, alarm_type: str, y: int) -> dict:
-        # Minimal valid ClearAlarm: no custom details script (avoids TBEL/JS
-        # lang mismatch that silently errors the node). Clearing still records
-        # clearTs + flips status to CLEARED, which is all we need for stats.
-        return _node(
-            name,
-            "org.thingsboard.rule.engine.action.TbClearAlarmNode",
-            1200, y,
-            {
-                "alarmType": alarm_type,
-                "scriptLang": "TBEL",
-                "alarmDetailsBuildTbel": "return metadata;",
-            },
-        )
-
-    # Clear the two alarm types
-    nodes.append(_clear("Clear: MedicalCollapse", "MedicalCollapse", 700))
-    nodes.append(_clear("Clear: FallSuspected", "FallSuspected", 900))
+    # ----- B1 REMOVED: no auto-clear on recovery -----
+    # Alarms are deliberately NOT cleared by the rule chain. A fall incident
+    # stays ACTIVE until a guardian resolves it from the console (REST
+    # /api/alarm/{id}/clear) or a TB operator clears it from the dashboard
+    # alarms table (allowClear=True). Recovery (situation==NORMAL) only greens
+    # the live map/cards via the JS transform — see `recovered` above. This
+    # fixes alarms vanishing within seconds of a fall, before anyone saw them.
 
     # ----- B4: wearer acknowledged the guardian is coming (ack_seen) -----
 
@@ -781,6 +782,36 @@ def build_rule_chain_metadata(chain_id: str) -> dict:
         },
     ))
 
+    # Optional FCM push: POST each newly-Created alarm to the local relay
+    # (scripts/fcm_relay.py), which forwards it to Firebase Cloud Messaging.
+    # TB runs in Docker, so "localhost" would be the container itself — the
+    # default relay URL uses host.docker.internal instead.
+    if fcm_relay_url and fcm_relay_secret:
+        nodes.append(_node(
+            "FCM push relay",
+            "org.thingsboard.rule.engine.rest.TbRestApiCallNode",
+            1500, 320,
+            {
+                "restEndpointUrlPattern": fcm_relay_url,
+                "requestMethod": "POST",
+                "headers": {
+                    "Content-Type": "application/json",
+                    "X-Relay-Secret": fcm_relay_secret,
+                    "X-Device-Name": "${deviceName}",
+                },
+                "useSimpleClientHttpFactory": False,
+                "parseToPlainText": False,
+                "ignoreRequestBody": False,
+                "enableProxy": False,
+                "readTimeoutMs": 5000,
+                "maxParallelRequestsCount": 0,
+                "useRedisQueueForMsgPersistence": False,
+                "trimQueue": False,
+                "maxQueueSize": 0,
+                "credentials": {"type": "anonymous"},
+            },
+        ))
+
     # Wire connections by node NAME (resolved to indices here) so the topology is
     # robust to nodes being added/removed without renumbering every index.
     idx = {node["name"]: i for i, node in enumerate(nodes)}
@@ -796,7 +827,6 @@ def build_rule_chain_metadata(chain_id: str) -> dict:
         _conn("Enrich derived telemetry", "Save Timeseries", "Success"),
         _conn("Enrich derived telemetry", "Filter: escalation==SOS_COLLAPSE", "Success"),
         _conn("Enrich derived telemetry", "Filter: escalation==ASK_OK", "Success"),
-        _conn("Enrich derived telemetry", "Filter: situation==NORMAL", "Success"),
         _conn("Enrich derived telemetry", "Filter: ack_seen", "Success"),
         # Filter → Alarm on True
         _conn("Filter: escalation==SOS_COLLAPSE", "Alarm: MedicalCollapse", "True"),
@@ -808,13 +838,22 @@ def build_rule_chain_metadata(chain_id: str) -> dict:
         _conn("Load latest situation (post-delay)", "Filter: still FALL after delay", "Success"),
         _conn("Load latest situation (post-delay)", "Filter: still FALL after delay", "Failure"),
         _conn("Filter: still FALL after delay", "Alarm: MedicalCollapse (auto-upgrade)", "True"),
-        # B1: NORMAL → clear the two alarm types
-        _conn("Filter: situation==NORMAL", "Clear: MedicalCollapse", "True"),
-        _conn("Filter: situation==NORMAL", "Clear: FallSuspected", "True"),
         # B4: ack_seen → transform to rescue_state telemetry → save timeseries
         _conn("Filter: ack_seen", "Save rescue_state", "True"),
         _conn("Save rescue_state", "Save Timeseries", "Success"),
     ]
+
+    if fcm_relay_url and fcm_relay_secret:
+        # Created only — TbCreateAlarmNode emits Updated for an already-ACTIVE
+        # alarm of the same type, so this wiring never pushes the same incident
+        # twice. The auto-upgrade node creates a *new* MedicalCollapse alarm
+        # (different type from the existing FallSuspected), so an escalation
+        # still pushes exactly once.
+        connections += [
+            _conn("Alarm: MedicalCollapse", "FCM push relay", "Created"),
+            _conn("Alarm: FallSuspected", "FCM push relay", "Created"),
+            _conn("Alarm: MedicalCollapse (auto-upgrade)", "FCM push relay", "Created"),
+        ]
 
     return {
         "ruleChainId": {"entityType": "RULE_CHAIN", "id": chain_id},
@@ -825,7 +864,14 @@ def build_rule_chain_metadata(chain_id: str) -> dict:
     }
 
 
-def provision_rule_chain(client: TbClient, name: str, backup_dir: Path) -> str:
+def provision_rule_chain(
+    client: TbClient,
+    name: str,
+    backup_dir: Path,
+    *,
+    fcm_relay_url: str = "",
+    fcm_relay_secret: str = "",
+) -> str:
     """Create / replace the named rule chain and set as root.
 
     Returns the rule chain ID.
@@ -860,7 +906,9 @@ def provision_rule_chain(client: TbClient, name: str, backup_dir: Path) -> str:
     chain_id = chain["id"]["id"]
 
     # 3. POST metadata
-    metadata = build_rule_chain_metadata(chain_id)
+    metadata = build_rule_chain_metadata(
+        chain_id, fcm_relay_url=fcm_relay_url, fcm_relay_secret=fcm_relay_secret
+    )
     client.post("/api/ruleChain/metadata", metadata)
     print(f"  installed {len(metadata['nodes'])} nodes, {len(metadata['connections'])} connections")
 
@@ -1475,19 +1523,19 @@ _AVATAR_JS = (
 
 _AVATAR_CSS = (
     ".gv{display:flex;align-items:center;gap:16px;height:100%;padding:10px 16px;"
-    "box-sizing:border-box;font-family:Roboto,system-ui,sans-serif;}"
-    ".gv-av{width:66px;height:66px;border-radius:50%;border:3px solid #16a34a;display:flex;"
+    "box-sizing:border-box;font-family:Roboto,system-ui,sans-serif;container-type:size;}"
+    ".gv-av{width:clamp(48px,17.2cqmin,66px);height:clamp(48px,17.2cqmin,66px);border-radius:50%;border:3px solid #16a34a;display:flex;"
     "align-items:center;justify-content:center;background:#0c1320;flex:0 0 auto;}"
-    ".gv-av span{color:#fff;font-size:22px;font-weight:700;}"
+    ".gv-av span{color:#fff;font-size:clamp(16px,5.7cqmin,22px);font-weight:700;}"
     ".gv-meta{display:flex;flex-direction:column;gap:4px;min-width:0;}"
-    ".gv-nm{font-size:16px;font-weight:700;color:#0c1320;}"
-    ".gv-tag{font-size:10px;font-weight:600;color:#64748b;background:#e2e8f0;"
-    "padding:1px 6px;border-radius:8px;margin-left:4px;}"
-    ".gv-bpm{font-size:30px;font-weight:800;line-height:1;}"
-    ".gv-bpm small{font-size:12px;font-weight:600;margin-left:3px;color:#64748b;}"
-    ".gv-bd{align-self:flex-start;color:#fff;font-size:12px;font-weight:700;"
-    "padding:2px 10px;border-radius:10px;}"
-    ".gv-sub{font-size:11px;color:#64748b;font-weight:600;}"
+    ".gv-nm{font-size:clamp(12px,4.2cqmin,16px);font-weight:700;color:#0c1320;}"
+    ".gv-tag{font-size:clamp(9px,2.6cqmin,10px);font-weight:600;color:#64748b;background:#e2e8f0;"
+    "padding:1px clamp(4px,1.6cqmin,6px);border-radius:clamp(6px,2.1cqmin,8px);margin-left:4px;}"
+    ".gv-bpm{font-size:clamp(22px,7.8cqmin,30px);font-weight:800;line-height:1;}"
+    ".gv-bpm small{font-size:clamp(9px,3.1cqmin,12px);font-weight:600;margin-left:3px;color:#64748b;}"
+    ".gv-bd{align-self:flex-start;color:#fff;font-size:clamp(9px,3.1cqmin,12px);font-weight:700;"
+    "padding:2px clamp(9px,2.6cqmin,10px);border-radius:clamp(9px,2.6cqmin,10px);}"
+    ".gv-sub{font-size:clamp(9px,2.9cqmin,11px);color:#64748b;font-weight:600;}"
 )
 
 
@@ -1509,12 +1557,12 @@ _VITALS_JS = (
 
 _VITALS_CSS = (
     ".vg{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;"
-    "height:100%;padding:10px;box-sizing:border-box;font-family:Roboto,system-ui,sans-serif;}"
-    ".vt{background:#f1f5f9;border-radius:10px;padding:8px 12px;display:flex;flex-direction:column;"
+    "height:100%;padding:10px;box-sizing:border-box;font-family:Roboto,system-ui,sans-serif;container-type:size;}"
+    ".vt{background:#f1f5f9;border-radius:clamp(7px,1.8cqmin,10px);padding:clamp(6px,1.4cqmin,8px) clamp(9px,2.2cqmin,12px);display:flex;flex-direction:column;"
     "justify-content:center;}"
-    ".vl{font-size:11px;color:#64748b;font-weight:600;margin-bottom:2px;}"
-    ".vv{font-size:26px;font-weight:800;line-height:1.05;}"
-    ".vv small{font-size:11px;font-weight:600;margin-left:2px;color:#94a3b8;}"
+    ".vl{font-size:clamp(9px,2cqmin,11px);color:#64748b;font-weight:600;margin-bottom:2px;}"
+    ".vv{font-size:clamp(19px,4.7cqmin,26px);font-weight:800;line-height:1.05;}"
+    ".vv small{font-size:clamp(9px,2cqmin,11px);font-weight:600;margin-left:2px;color:#94a3b8;}"
 )
 
 _STATUS_JS = (
@@ -1535,11 +1583,11 @@ _STATUS_JS = (
 
 _STATUS_CSS = (
     ".sg{display:flex;flex-direction:column;justify-content:center;gap:9px;height:100%;"
-    "padding:10px 16px;box-sizing:border-box;font-family:Roboto,system-ui,sans-serif;}"
+    "padding:10px 16px;box-sizing:border-box;font-family:Roboto,system-ui,sans-serif;container-type:size;}"
     ".si{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eef2f7;"
-    "padding-bottom:7px;}"
-    ".sl{font-size:12px;color:#64748b;font-weight:600;}"
-    ".sv{font-size:13px;font-weight:700;}"
+    "padding-bottom:clamp(5px,3.3cqmin,7px);}"
+    ".sl{font-size:clamp(9px,5.7cqmin,12px);color:#64748b;font-weight:600;}"
+    ".sv{font-size:clamp(11px,6.1cqmin,13px);font-weight:700;}"
 )
 
 
@@ -1629,34 +1677,34 @@ _PROFILE_JS = (
 )
 
 _PROFILE_CSS = (
-    ".pc{height:100%;box-sizing:border-box;padding:18px;font-family:Roboto,'Noto Sans TC',system-ui,sans-serif;"
+    ".pc{height:100%;box-sizing:border-box;container-type:size;padding:18px;font-family:Roboto,'Noto Sans TC',system-ui,sans-serif;"
     "color:#0f172a;display:flex;flex-direction:column;text-align:center;}"
     ".hd{display:flex;justify-content:center;}"
-    ".av{position:relative;width:80px;height:80px;border-radius:50%;border:3px solid #16a34a;"
+    ".av{position:relative;width:clamp(58px,11.8cqmin,80px);height:clamp(58px,11.8cqmin,80px);border-radius:50%;border:3px solid #16a34a;"
     "background:linear-gradient(135deg,#dbeafe,#bfdbfe);display:flex;align-items:center;justify-content:center;}"
-    ".av span{color:#1e40af;font-size:26px;font-weight:800;}"
-    ".dot{position:absolute;right:3px;bottom:3px;width:16px;height:16px;border-radius:50%;border:3px solid #fff;}"
-    ".nm{font-size:20px;font-weight:700;margin-top:11px;}"
-    ".sb{font-size:12px;color:#64748b;margin-top:2px;}"
-    ".pill{display:inline-flex;align-items:center;gap:6px;align-self:center;margin-top:9px;font-size:12px;"
-    "font-weight:700;padding:4px 14px;border-radius:14px;}"
-    ".pd{width:7px;height:7px;border-radius:50%;background:currentColor;}"
-    ".mg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px;}"
-    ".m{background:#f8fafc;border:1px solid #eef2f7;border-radius:12px;padding:10px 6px;}"
-    ".ml{font-size:11px;color:#64748b;font-weight:600;}"
-    ".mv{font-size:20px;font-weight:800;line-height:1.1;margin-top:3px;}"
-    ".mv small{font-size:11px;color:#94a3b8;font-weight:600;margin-left:1px;}"
-    ".dg{margin-top:14px;text-align:left;}"
-    ".dr{display:flex;justify-content:space-between;border-bottom:1px solid #eef2f7;padding:7px 0;font-size:13px;}"
+    ".av span{color:#1e40af;font-size:clamp(19px,3.8cqmin,26px);font-weight:800;}"
+    ".dot{position:absolute;right:3px;bottom:3px;width:clamp(12px,2.4cqmin,16px);height:clamp(12px,2.4cqmin,16px);border-radius:50%;border:3px solid #fff;}"
+    ".nm{font-size:clamp(15px,2.9cqmin,20px);font-weight:700;margin-top:clamp(8px,1.6cqmin,11px);}"
+    ".sb{font-size:clamp(9px,1.8cqmin,12px);color:#64748b;margin-top:2px;}"
+    ".pill{display:inline-flex;align-items:center;gap:clamp(4px,0.9cqmin,6px);align-self:center;margin-top:clamp(7px,1.3cqmin,9px);font-size:clamp(9px,1.8cqmin,12px);"
+    "font-weight:700;padding:4px clamp(10px,2.1cqmin,14px);border-radius:clamp(10px,2.1cqmin,14px);}"
+    ".pd{width:clamp(5px,1cqmin,7px);height:clamp(5px,1cqmin,7px);border-radius:50%;background:currentColor;}"
+    ".mg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:clamp(7px,1.5cqmin,10px);margin-top:clamp(12px,2.4cqmin,16px);}"
+    ".m{background:#f8fafc;border:1px solid #eef2f7;border-radius:clamp(9px,1.8cqmin,12px);padding:clamp(7px,1.5cqmin,10px) clamp(4px,0.9cqmin,6px);}"
+    ".ml{font-size:clamp(9px,1.6cqmin,11px);color:#64748b;font-weight:600;}"
+    ".mv{font-size:clamp(15px,2.9cqmin,20px);font-weight:800;line-height:1.1;margin-top:3px;}"
+    ".mv small{font-size:clamp(9px,1.6cqmin,11px);color:#94a3b8;font-weight:600;margin-left:1px;}"
+    ".dg{margin-top:clamp(10px,2.1cqmin,14px);text-align:left;}"
+    ".dr{display:flex;justify-content:space-between;border-bottom:1px solid #eef2f7;padding:clamp(5px,1cqmin,7px) 0;font-size:clamp(10px,1.9cqmin,13px);}"
     ".dr:last-child{border-bottom:none;}"
     ".dl{color:#64748b;}.dv{font-weight:600;}"
-    ".ec{display:flex;align-items:center;gap:8px;margin-top:14px;padding:11px 12px;background:#f8fafc;"
-    "border:1px solid #eef2f7;border-radius:10px;text-align:left;}"
-    ".ec .ph{width:30px;height:30px;border-radius:8px;background:#eff6ff;color:#2563eb;display:flex;"
+    ".ec{display:flex;align-items:center;gap:clamp(6px,1.2cqmin,8px);margin-top:clamp(10px,2.1cqmin,14px);padding:clamp(8px,1.6cqmin,11px) clamp(9px,1.8cqmin,12px);background:#f8fafc;"
+    "border:1px solid #eef2f7;border-radius:clamp(7px,1.5cqmin,10px);text-align:left;}"
+    ".ec .ph{width:clamp(22px,4.4cqmin,30px);height:clamp(22px,4.4cqmin,30px);border-radius:clamp(6px,1.2cqmin,8px);background:#eff6ff;color:#2563eb;display:flex;"
     "align-items:center;justify-content:center;flex:0 0 auto;}"
-    ".ecl{color:#64748b;font-size:11px;}"
-    ".ec b{font-size:12px;}"
-    ".demo{font-size:10px;color:#94a3b8;text-align:left;margin-top:8px;}"
+    ".ecl{color:#64748b;font-size:clamp(9px,1.6cqmin,11px);}"
+    ".ec b{font-size:clamp(9px,1.8cqmin,12px);}"
+    ".demo{font-size:clamp(9px,1.5cqmin,10px);color:#94a3b8;text-align:left;margin-top:clamp(6px,1.2cqmin,8px);}"
 )
 
 
@@ -1716,23 +1764,23 @@ _STATS_JS = (
     " + '<div class=\"ks\">'+sub+'</div></div>'; }"
     "return '<div class=\"kg\">'"
     "+ tile('近24h 跌倒', falls, '', '跌倒/倒地告警數', '⚠', 'rgba(220,38,38,.12)', '#dc2626')"
-    "+ tile('平均恢復時間', rec, 's', '自跌倒到站起 (clearTs−startTs)', '⏱', 'rgba(22,163,74,.12)', '#16a34a')"
-    "+ tile('自行恢復率', self, '%', '已清除 ÷ 跌倒告警', '↺', 'rgba(37,99,235,.12)', '#2563eb')"
+    "+ tile('平均處理時間', rec, 's', '自跌倒到守護者解除 (clearTs−startTs)', '⏱', 'rgba(22,163,74,.12)', '#16a34a')"
+    "+ tile('已解除率', self, '%', '已解除 ÷ 跌倒告警', '↺', 'rgba(37,99,235,.12)', '#2563eb')"
     "+ tile('活動時間', actHr, 'hr', '近12h 正常活動(非跌倒)', '🚶', 'rgba(8,145,178,.12)', '#0891b2')"
     "+ '</div>';"
 )
 
 _STATS_CSS = (
     ".kg{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;height:100%;padding:6px 4px;"
-    "box-sizing:border-box;font-family:Roboto,'Noto Sans TC',system-ui,sans-serif;}"
-    ".k{background:#fff;border:1px solid #eef2f7;border-radius:12px;padding:12px 16px;display:flex;"
+    "box-sizing:border-box;font-family:Roboto,'Noto Sans TC',system-ui,sans-serif;container-type:size;}"
+    ".k{background:#fff;border:1px solid #eef2f7;border-radius:clamp(9px,7.4cqmin,12px);padding:clamp(9px,7.4cqmin,12px) clamp(12px,9.9cqmin,16px);display:flex;"
     "flex-direction:column;justify-content:center;gap:5px;}"
     ".kt{display:flex;align-items:center;justify-content:space-between;}"
-    ".kl{font-size:12px;color:#64748b;font-weight:600;}"
-    ".ki{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;}"
-    ".kv{font-size:25px;font-weight:800;line-height:1;color:#0f172a;}"
-    ".kv small{font-size:12px;color:#94a3b8;font-weight:600;margin-left:2px;}"
-    ".ks{font-size:11px;color:#94a3b8;}"
+    ".kl{font-size:clamp(9px,7.4cqmin,12px);color:#64748b;font-weight:600;}"
+    ".ki{width:clamp(22px,18.5cqmin,30px);height:clamp(22px,18.5cqmin,30px);border-radius:clamp(6px,5.6cqmin,9px);display:flex;align-items:center;justify-content:center;font-size:clamp(10px,8.6cqmin,14px);}"
+    ".kv{font-size:clamp(19px,15.4cqmin,25px);font-weight:800;line-height:1;color:#0f172a;}"
+    ".kv small{font-size:clamp(9px,7.4cqmin,12px);color:#94a3b8;font-weight:600;margin-left:2px;}"
+    ".ks{font-size:clamp(9px,6.8cqmin,11px);color:#94a3b8;}"
 )
 
 
@@ -1793,17 +1841,20 @@ _GUARDIANS_JS = (
 )
 
 _GUARDIANS_CSS = (
+    # Responsive: container-type:size makes 1cqmin = 1% of the card's smaller
+    # side, so every clamp(min, K*cqmin, max) scales the content down with the
+    # card on a 1080p screen instead of overflowing (max = original 2K px).
     ".gw{height:100%;box-sizing:border-box;font-family:Roboto,'Noto Sans TC',system-ui,sans-serif;"
-    "color:#0f172a;display:flex;flex-direction:column;}"
-    ".glist{flex:1;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:6px 0;}"
-    ".gr{display:flex;align-items:center;gap:12px;padding:11px 18px;}"
-    ".gd{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;"
-    "font-weight:700;font-size:13px;flex:0 0 auto;}"
+    "color:#0f172a;display:flex;flex-direction:column;container-type:size;}"
+    ".glist{flex:1;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:clamp(4px,2.0cqmin,6px) 0;}"
+    ".gr{display:flex;align-items:center;gap:clamp(9px,4.0cqmin,12px);padding:clamp(8px,3.7cqmin,11px) clamp(13px,6.0cqmin,18px);}"
+    ".gd{width:clamp(27px,12.8cqmin,38px);height:clamp(27px,12.8cqmin,38px);border-radius:50%;display:flex;align-items:center;justify-content:center;"
+    "font-weight:700;font-size:clamp(11px,4.4cqmin,13px);flex:0 0 auto;}"
     ".gi{flex:1;min-width:0;}"
-    ".gn{font-size:15px;font-weight:600;}"
-    ".gm{font-size:12px;color:#64748b;display:flex;align-items:center;gap:6px;margin-top:2px;}"
-    ".gdot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto;}"
-    ".gf{padding:11px 18px;border-top:1px solid #eef2f7;font-size:11px;color:#2563eb;}"
+    ".gn{font-size:clamp(11px,5.0cqmin,15px);font-weight:600;}"
+    ".gm{font-size:clamp(9px,4.0cqmin,12px);color:#64748b;display:flex;align-items:center;gap:clamp(4px,2.0cqmin,6px);margin-top:2px;}"
+    ".gdot{width:clamp(6px,2.7cqmin,8px);height:clamp(6px,2.7cqmin,8px);border-radius:50%;display:inline-block;flex:0 0 auto;}"
+    ".gf{padding:clamp(8px,3.7cqmin,11px) clamp(13px,6.0cqmin,18px);border-top:1px solid #eef2f7;font-size:clamp(9px,3.7cqmin,11px);color:#2563eb;}"
 )
 
 
@@ -1852,7 +1903,7 @@ def _dispatch_js(wearer_device_id: str, guardian: str) -> str:
 
 
 def dispatch_segment(wearer_device_id: str, g_left: str, g_right: str,
-                     sizeX: int = 8, sizeY: int = 1) -> dict:
+                     sizeX: int = 8, sizeY: int = 2) -> dict:
     """Two-segment 'dispatch guardian' button — each segment writes the dispatch
     command for that guardian to the wearer's shared scope (native click)."""
     settings = {
@@ -1881,8 +1932,10 @@ def dispatch_segment(wearer_device_id: str, g_left: str, g_right: str,
         "appearance": {
             "layout": "squared", "autoScale": False,
             "cardBorder": 1, "cardBorderColor": "#bfdbfe",
-            "leftAppearance": _seg_appearance("指派 " + g_left, "directions_run"),
-            "rightAppearance": _seg_appearance("指派 " + g_right, "directions_run"),
+            # Short, no-latin labels so the fixed-size native button text never
+            # clips on a 1080p screen (the command/toast still use the full id).
+            "leftAppearance": _seg_appearance(g_left.replace("guardian", "守護者"), "directions_run"),
+            "rightAppearance": _seg_appearance(g_right.replace("guardian", "守護者"), "directions_run"),
             "selectedStyle": {"mainColor": "#FFFFFF", "backgroundColor": "#2563eb",
                               "customStyle": {"enabled": None, "hovered": None, "disabled": None}},
             "unselectedStyle": {"mainColor": "#2563eb", "backgroundColor": "#eff6ff",
@@ -1929,12 +1982,12 @@ _DISPATCH_STATUS_JS = (
 
 _DISPATCH_STATUS_CSS = (
     ".dsx{display:flex;align-items:center;gap:12px;height:100%;box-sizing:border-box;padding:10px 16px;"
-    "font-family:Roboto,'Noto Sans TC',system-ui,sans-serif;}"
-    ".dic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;"
-    "font-size:17px;flex:0 0 auto;}"
+    "font-family:Roboto,'Noto Sans TC',system-ui,sans-serif;container-type:size;}"
+    ".dic{width:clamp(27px,23.5cqmin,38px);height:clamp(27px,23.5cqmin,38px);border-radius:clamp(7px,6.2cqmin,10px);display:flex;align-items:center;justify-content:center;"
+    "font-size:clamp(13px,10.5cqmin,17px);flex:0 0 auto;}"
     ".dtx{min-width:0;}"
-    ".dl{font-size:11px;color:#64748b;font-weight:600;}"
-    ".dv{font-size:15px;font-weight:700;margin-top:2px;}"
+    ".dl{font-size:clamp(9px,6.8cqmin,11px);color:#64748b;font-weight:600;}"
+    ".dv{font-size:clamp(11px,9.3cqmin,15px);font-weight:700;margin-top:2px;}"
 )
 
 
@@ -2171,8 +2224,8 @@ def segment_tabs(active: str, sizeX: int = 8, sizeY: int = 2) -> dict:
             # TB scales them to fill the widget and the tab text becomes huge.
             "layout": "squared", "autoScale": False,
             "cardBorder": 1, "cardBorderColor": "#e2e8f0",
-            "leftAppearance": _seg_appearance("總覽 Overview", "dashboard"),
-            "rightAppearance": _seg_appearance("趨勢與告警 Trends", "show_chart"),
+            "leftAppearance": _seg_appearance("總覽", "dashboard"),
+            "rightAppearance": _seg_appearance("趨勢與告警", "show_chart"),
             "selectedStyle": {"mainColor": "#FFFFFF", "backgroundColor": "#2563eb",
                               "customStyle": {"enabled": None, "hovered": None, "disabled": None}},
             "unselectedStyle": {"mainColor": "#475569", "backgroundColor": "#FFFFFF",
@@ -2261,14 +2314,16 @@ def build_dashboard(dashboard_name: str, wearers: list[dict] | None = None) -> d
         add(state_timeline(p_alias, "情境時間軸 Activity timeline", "situation_code",
                            timewindow_ms=43200000, sizeX=12, sizeY=5),
             col=12, row=1, state="history")
+        # Right column stacks 守護者(4) + 指派(2) + 派遣狀態(2) = 8 rows, so the
+        # alarms table on the left is 8 rows tall too — both columns end at row 13.
         add(alarms_table(workers_alias_id, "告警歷史 Alarm history",
-                         sizeX=16, sizeY=7, status_list=[]),
+                         sizeX=16, sizeY=8, status_list=[]),
             col=0, row=6, state="history")
         add(guardians_card(guardians_alias_id, 24.78686, 120.99681, sizeX=8, sizeY=4),
             col=16, row=6, state="history")
         add(dispatch_segment(primary["device_id"], "guardian1", "guardian2",
-                             sizeX=8, sizeY=1), col=16, row=10, state="history")
-        add(dispatch_status(p_alias, sizeX=8, sizeY=2), col=16, row=11, state="history")
+                             sizeX=8, sizeY=2), col=16, row=10, state="history")
+        add(dispatch_status(p_alias, sizeX=8, sizeY=2), col=16, row=12, state="history")
     else:
         add(workers_map(workers_alias_id, "即時位置 Live location · 陽明交大", sizeX=15, sizeY=9,
                         guardians_alias_id=guardians_alias_id, center=NYCU_CENTER),
@@ -2503,6 +2558,12 @@ def main() -> int:
                    help="Password set for every newly-created guardian user. Override this; do not ship the default.")
     p.add_argument("--legacy-guardian-device", default="Guardian_Device_001",
                    help="Old single 'guardian device' to delete (no longer used in the wearer model).")
+    p.add_argument("--fcm-relay-url", default="http://host.docker.internal:9090/notify",
+                   help="FCM relay endpoint as seen FROM the ThingsBoard container "
+                        "(scripts/fcm_relay.py on the docker host).")
+    p.add_argument("--fcm-relay-secret", default="",
+                   help="Shared secret for the FCM relay (its FCM_RELAY_SECRET). "
+                        "Empty (default) = no FCM push node is provisioned.")
     p.add_argument("--skip-rule-chain", action="store_true")
     p.add_argument("--skip-dashboard", action="store_true")
     p.add_argument("--skip-notifications", action="store_true",
@@ -2564,7 +2625,17 @@ def main() -> int:
 
     if not args.skip_rule_chain:
         print(f"-> provision rule chain '{args.rule_chain_name}'")
-        provision_rule_chain(client, args.rule_chain_name, backup_dir)
+        provision_rule_chain(
+            client,
+            args.rule_chain_name,
+            backup_dir,
+            fcm_relay_url=args.fcm_relay_url,
+            fcm_relay_secret=args.fcm_relay_secret,
+        )
+        if args.fcm_relay_secret:
+            print(f"  FCM push relay node wired (alarm Created → {args.fcm_relay_url})")
+        else:
+            print("  FCM push relay node skipped (no --fcm-relay-secret)")
 
     dash_id = None
     if not args.skip_dashboard:

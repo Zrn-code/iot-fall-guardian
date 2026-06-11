@@ -83,7 +83,7 @@ flowchart TB
 
 | 層 | 角色 | 元件 | 職責 |
 | --- | --- | --- | --- |
-| **IN** | 編排中樞 | ThingsBoard CE 4.3 `GuardianRules` + 儀表板 | 從 situation+features **算 escalation** → 建立/清除告警（NORMAL 自動 ClearAlarm）、`ASK_OK→20s 無回應→自動升級 COLLAPSE`、守護者命令（shared attr）→手錶、`ack_seen→rescue_state`、統計、通知 |
+| **IN** | 編排中樞 | ThingsBoard CE 4.3 `GuardianRules` + 儀表板 | 從 situation+features **算 escalation** → 建立告警、`ASK_OK→20s 無回應→自動升級 COLLAPSE`、守護者命令（shared attr）→手錶、`ack_seen→rescue_state`、統計、通知。**告警只由守護者手動解除**（規則鏈不自動清除，恢復只轉綠 live 狀態） |
 | **MN** | 純 AI 推論 | `posture-api/` FastAPI | `SituationClassifier` + 個人 HR 基線，**只回 `{situation, confidence, features}`** |
 | **ASN** | 末端 | 手錶 `wear_os_app` / 手機 `phone_app` | 手錶 `/api/infer` 拿 situation → 把結果+GPS 直送 TB；手機 TB 帳號登入監看、上傳自身 GPS、下行「前往中」 |
 
@@ -213,15 +213,21 @@ docker compose up -d --build
 # 2. 用真實跌倒資料集訓練情境模型（→ data/models/posture_classifier.joblib, random-forest-v3）
 .\.venv\Scripts\python.exe scripts\train_fall_model.py
 
-# 3. 用 API 一鍵 provision ThingsBoard（雙角色 + 編排規則鏈 + 儀表板 + 護理通知）
-#    預設單一配戴者 W-001；要多人就 --wearers W-001,W-002,...（其餘 Wearer_* 會被移除）
-.\.venv\Scripts\python.exe scripts\provision_thingsboard.py
+# 3. 啟動 FCM 推播 relay（可選；app 關閉也能跳手機系統通知。首次需先完成下方「Firebase 推播一次性設定」）
+#    新開一個 PowerShell 視窗讓它常駐（secret 已產生在 data\fcm_relay_secret.txt，gitignored）：
+$env:FCM_RELAY_SECRET = Get-Content data\fcm_relay_secret.txt -Raw
+.\.venv\Scripts\python.exe scripts\fcm_relay.py
 
-# 4. 套用模型到運行中的服務（資料 volume 即時生效；或熱重建）
+# 4. 用 API 一鍵 provision ThingsBoard（雙角色 + 編排規則鏈 + 儀表板 + 護理通知）
+#    預設單一配戴者 W-001；要多人就 --wearers W-001,W-002,...（其餘 Wearer_* 會被移除）
+#    帶 --fcm-relay-secret（同上方 secret）才會在規則鏈接上 FCM 推播節點；不帶 = 行為同舊版
+.\.venv\Scripts\python.exe scripts\provision_thingsboard.py --fcm-relay-secret (Get-Content data\fcm_relay_secret.txt -Raw)
+
+# 5. 套用模型到運行中的服務（資料 volume 即時生效；或熱重建）
 Invoke-RestMethod -Method Post http://localhost:8000/api/training/rebuild
 Invoke-RestMethod http://localhost:8000/health   # model=random-forest-v3, tb_workers_loaded=1
 
-# 5. 無手錶情況下，一鍵注入各情境（回放真實視窗 → 推論 → 送 TB → TB 算 escalation+告警）
+# 6. 無手錶情況下，一鍵注入各情境（回放真實視窗 → 推論 → 送 TB → TB 算 escalation+告警）
 $base="http://localhost:8000"
 "normal","sit","lie","fall","collapse" | % { Invoke-RestMethod -Method Post "$base/api/demo/inject?scenario=$_&worker_id=W-001" }
 ```
@@ -237,6 +243,27 @@ $base="http://localhost:8000"
 
 > **部署提醒**：posture-api 是 docker image（`COPY app ./app`），`data/` 是 volume。
 > 改**模型/資料** → 寫進 `data/` 即時生效（或 `/api/training/rebuild`）；改 **Python 程式** → `docker compose up -d --build posture-api` 重建映像。
+
+### 7.1 Firebase 推播一次性設定（app 關閉也跳通知）
+
+告警鏈路：規則鏈 alarm **Created** → `FCM push relay` REST 節點（`host.docker.internal:9090`）→
+`scripts/fcm_relay.py` → FCM topic `guardian-alerts` → 手機系統通知（heads-up + 震動，app 關閉也會跳）。
+前景時 FCM 不顯示、由 app 內 4 秒輪詢 banner 接手，不會雙跳。
+
+首次使用需在 [Firebase console](https://console.firebase.google.com/)（專案 `iotapp-d4b3c`）手動完成：
+
+1. **註冊 Android app**：Add app → Android，package name `com.smartwarehouse.phone_app`（SHA-1 免填）。
+2. **下載 `google-services.json`** → 放到 `phone_app/android/app/`（已 gitignore；**沒有這個檔 phone_app 會 build 失敗**）。
+3. **產 service account key**：Project settings → Service accounts → Generate new private key
+   → 存成 `data/firebase-service-account.json`（已 gitignore，絕不可 commit）。
+4. 一次性安裝 relay 依賴：`.\.venv\Scripts\pip.exe install firebase-admin`。
+
+注意事項：
+
+- 手機需有 Google Play services；app 要**先開啟過一次**（建通知 channel + 訂閱 topic）之後關閉才收得到。
+- 「設定 → 強制停止」的 app Android 不投遞 FCM；從最近工作列滑掉沒問題。
+- demo 前先注入一次告警暖機（新 topic 首次訂閱可能延遲數秒～數分鐘）。
+- 容器打不到 relay 時（TB 節點 debug 看 Failure）：檢查 Windows 防火牆是否放行 9090 入站。
 
 ---
 

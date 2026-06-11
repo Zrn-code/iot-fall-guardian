@@ -13,6 +13,12 @@ data/worker_tokens.json
 data/guardian_tokens.json
 data/worker_baselines.json
 
+# Firebase push credentials (FCM relay + phone app)
+data/firebase-service-account.json
+phone_app/android/app/google-services.json
+data/fcm_relay_secret.txt
+data/fcm_relay*.log
+
 # Android signing material
 **/*.jks
 **/*.keystore

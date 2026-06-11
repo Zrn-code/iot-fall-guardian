@@ -192,7 +192,8 @@ sequenceDiagram
   end
   alt 配戴者點「我沒事」
     W->>TB: telemetry situation=NORMAL
-    TB->>TB: 3× ClearAlarm（清 FallSuspected 等）
+    TB->>TB: last_situation=NORMAL → 取消 20s 升級安全網
+    Note over TB: FallSuspected 不自動清除，留待守護者解除
   else 15s 無回應（手錶）
     W->>TB: telemetry situation=FALL, no_response=true
     TB->>TB: 升級 SOS_COLLAPSE → 建 MedicalCollapse (CRITICAL)
@@ -230,20 +231,27 @@ sequenceDiagram
   end
 ```
 
-### 4.4 恢復 → 自動清除告警
+### 4.4 恢復與解除（守護者手動閉環）
+
+跌倒告警**不會**被規則鏈自動清除——只有人（守護者 console / TB 操作員）能解除。
+配戴者恢復（situation 回 NORMAL）只把 live 狀態轉綠，告警仍維持 ACTIVE，避免「閃一下就消失、查無紀錄」。
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant W as 配戴者手錶
   participant TB as GuardianRules
+  participant G as 守護者（手機/儀表板）
   participant DB as 儀表板
 
   W->>TB: telemetry situation=NORMAL
-  TB->>TB: JS：recovered=true, risk/hazard 歸零, last_recovery_at
-  TB->>TB: ClearAlarm × 2（MedicalCollapse / FallSuspected）
-  Note over TB: 告警轉 CLEARED 但保留 startTs/clearTs（供恢復統計）
-  TB-->>DB: 住民卡轉綠、告警歷史顯示 duration
+  TB->>TB: JS：recovered=true, last_recovery_at（只更新 live 狀態）
+  Note over TB: 告警**不**自動清除 — 仍維持 ACTIVE
+  TB-->>DB: 住民卡/地圖轉綠，但告警仍在「作用中」清單
+  TB-->>G: 告警標「已自行恢復」(配戴者 live=NORMAL)
+  G->>TB: 確認後按「解除·已處理」→ POST /api/alarm/{id}/clear
+  TB->>TB: 告警轉 CLEARED，stamp clearTs（供處理時長統計）
+  TB-->>DB: 移入告警歷史，顯示 duration
 ```
 
 ---
@@ -271,12 +279,13 @@ flowchart TD
   GA --> F4{"last_situation<br/>!= NORMAL?"}
   F4 -- yes --> A4["CreateAlarm<br/>MedicalCollapse（升級）"]
 
-  SAVE --> F5{"situation ==<br/>NORMAL?"}
-  F5 -- yes --> C1["ClearAlarm × 2<br/>(TBEL: return metadata)"]
-
   MTS -- "ack_seen 分支" --> F6{"ack_seen<br/>== true?"}
   F6 -- yes --> T1["Transform<br/>rescue_state=guardian_enroute"] --> SAVE
+
+  G["守護者 console"] -. "POST /api/alarm/{id}/clear<br/>(規則鏈外·人為解除)" .-> CLR["告警 → CLEARED"]
 ```
+
+> 規則鏈**不再**有 `situation==NORMAL → ClearAlarm` 分支。`recovered` 只在 JS Transform 內標記以轉綠 live 狀態，清除一律由守護者透過 REST 解除。
 
 ### 5.2 escalation 判斷（JS Transform）
 
@@ -302,7 +311,7 @@ if (situation === 'FALL') {
 | 機制 | 節點 | 重點 |
 | --- | --- | --- |
 | 建立 | `CreateAlarm`（MedicalCollapse/FallSuspected，`propagateToOwner=true`） | 讓 customer（守護者）看得到 |
-| 自動清除 | `situation==NORMAL` → 2× `TbClearAlarmNode` | **坑**：`alarmDetailsBuild` 要用 TBEL（`alarmDetailsBuildTbel:"return metadata;"`），用 JS 但 scriptLang=TBEL 會 silently 失敗 |
+| 手動解除 | 守護者 console `POST /api/alarm/{id}/clear`（規則鏈**不再**自動清除） | 告警維持 ACTIVE 到人為解除，避免恢復瞬間就消失；`recovered` 旗標讓 console 標「已自行恢復」供守護者判斷 |
 | 20s 延遲升級 | `TbMsgDelayNode(20s)` → `TbGetAttributesNode` → filter | 要從 **node6 原始 telemetry** 接 delay，不要從 alarm node 接（alarm 輸出是 details 不含 escalation） |
 
 ### 5.4 護理呼叫派發（Notification Center）
@@ -313,9 +322,31 @@ if (situation === 'FALL') {
 | **template**（WEB） | subject `🚑 ${alarmType} · ${alarmSeverity}`、body 用 `${alarmOriginatorName}` |
 | **rule**（triggerType=ALARM） | `alarmTypes=[MedicalCollapse,FallSuspected]`、`notifyOn=[CREATED]`、`escalationTable={"0":[target]}`（即時送） |
 
-### 5.5 關鍵節點 API 筆記（實測）
+### 5.5 FCM 手機推播（app 關閉也跳通知）
 
-- ClearAlarm：`{alarmType, scriptLang:"TBEL", alarmDetailsBuildTbel:"return metadata;"}`。
+Notification Center 的 WEB 推播只送進 TB 網頁；手機端原本靠 phone_app 前景每 4 秒輪詢，app 關閉即失明。
+現在告警 **Created** 另接一條 FCM 鏈路（`--fcm-relay-secret` 啟用，預設不佈建）：
+
+```text
+alarm Created ─→ TbRestApiCallNode「FCM push relay」
+                  POST http://host.docker.internal:9090/notify
+                  （headers: X-Relay-Secret、X-Device-Name=${deviceName}）
+              ─→ scripts/fcm_relay.py（宿舍機，firebase-admin + service account key）
+              ─→ FCM topic guardian-alerts（notification message, priority=high,
+                  channel_id=guardian_alerts）
+              ─→ Android 系統通知（背景/關閉都跳 heads-up；channel 由 phone_app
+                  MainActivity 以 IMPORTANCE_HIGH 建立）
+```
+
+- **只接 `Created`、不接 `Updated`**：`TbCreateAlarmNode` 對同 originator+type 的既有 ACTIVE 告警輸出
+  `Updated`，天然防重複；auto-upgrade 建的是**新型別** MedicalCollapse，仍走 `Created`、升級會推一次。
+- 前景時 FCM notification message 不顯示（由輪詢 banner 接手），不會雙跳；relay 另以 alarm id 做 LRU 去重保險。
+- TB 在 Docker 內，relay URL 用 `host.docker.internal`；relay bind `0.0.0.0`。
+- 憑證皆 gitignored：`data/firebase-service-account.json`、`phone_app/android/app/google-services.json`（取得步驟見 README §7.1）。
+
+### 5.6 關鍵節點 API 筆記（實測）
+
+- ClearAlarm（規則鏈已移除自動清除）：改由 console `POST /api/alarm/{id}/clear`（customer user 可清自己 customer 名下裝置的告警）。若日後要復用規則鏈內 `TbClearAlarmNode`，注意 `alarmDetailsBuild` 要用 TBEL（`alarmDetailsBuildTbel:"return metadata;"`），用 JS 但 scriptLang=TBEL 會 silently 失敗。
 - Delay：`org.thingsboard.rule.engine.delay.TbMsgDelayNode {periodInSeconds, maxPendingMsgs}`，delay 後走 `Success`。
 - 載屬性進 metadata：`org.thingsboard.rule.engine.metadata.TbGetAttributesNode {latestTsKeyNames:["last_situation"], fetchTo:"METADATA"}`。
 - 儀表板 `cards.markdown_card`/`html_card` 的 `descriptor.actionSources` 是空 `{}` → 掛在上面的 `elementClick` **全被忽略**；要按鈕互動改用原生 `system.two_segment_button`（分頁 `updateDashboardState`、功能性指派 `type:custom` 寫 shared attr）。詳見 [progress-dual-role.md](progress-dual-role.md) 與記憶 `tb-care-console-shapes`。
