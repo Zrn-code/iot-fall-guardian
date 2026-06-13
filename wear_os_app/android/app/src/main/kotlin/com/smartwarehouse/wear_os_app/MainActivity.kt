@@ -206,39 +206,32 @@ class MainActivity : FlutterActivity() {
 		val client = measureClient
 		val callback = measureCallback
 		if (client != null && callback != null) {
-			runCatching { tryUnregisterMeasureCallback(client, callback) }
+			// The method is unregisterMeasureCallbackAsync(dataType, callback) —
+			// an earlier lookup searched for names that don't exist in
+			// health-services-client 1.1.0, so callbacks were never actually
+			// unregistered and a stale one kept the HR stream hostage after the
+			// app restarted (bpm frozen at the last value). Reflection because
+			// the return type (Guava ListenableFuture) is not on the compile
+			// classpath; the result can be ignored.
+			try {
+				val method = client.javaClass.methods.firstOrNull {
+					it.name == "unregisterMeasureCallbackAsync" &&
+						it.parameterTypes.size == 2 &&
+						it.parameterTypes[0].isAssignableFrom(DeltaDataType::class.java) &&
+						it.parameterTypes[1].isAssignableFrom(MeasureCallback::class.java)
+				}
+				if (method != null) {
+					method.invoke(client, DataType.HEART_RATE_BPM, callback)
+					Log.i(TAG, "HealthServices unregisterMeasureCallbackAsync issued")
+				} else {
+					Log.w(TAG, "HealthServices unregister method not found")
+				}
+			} catch (t: Throwable) {
+				Log.w(TAG, "HealthServices unregister failed: $t")
+			}
 		}
 		measureCallback = null
 		healthServicesRegistered = false
-	}
-
-	private fun tryUnregisterMeasureCallback(client: MeasureClient, callback: MeasureCallback) {
-		val methods = client.javaClass.methods
-		for (method in methods) {
-			when (method.name) {
-				"unregisterMeasureCallback", "clearMeasureCallback", "clearCallback" -> {
-					try {
-						val parameterTypes = method.parameterTypes
-						if (parameterTypes.size == 1 &&
-							MeasureCallback::class.java.isAssignableFrom(parameterTypes[0])
-						) {
-							method.invoke(client, callback)
-							return
-						}
-
-						if (parameterTypes.size == 2 &&
-							DeltaDataType::class.java.isAssignableFrom(parameterTypes[0]) &&
-							MeasureCallback::class.java.isAssignableFrom(parameterTypes[1])
-						) {
-							method.invoke(client, DataType.HEART_RATE_BPM, callback)
-							return
-						}
-					} catch (_: Throwable) {
-						// Try another candidate method.
-					}
-				}
-			}
-		}
 	}
 
 	// Emits a Map so the Dart _hrBuffer gets {timestamp, bpm, accuracy} entries

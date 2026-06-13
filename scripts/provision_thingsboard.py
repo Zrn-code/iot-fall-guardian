@@ -1389,26 +1389,105 @@ def radial_gauge(alias_id: str, title: str, key: str, max_value: float = 100) ->
 
 
 def _map_keys() -> list[dict]:
+    # NB: labels are kept identical to the key names — the map's label/tooltip/
+    # marker functions all read `data['<label>']`, so a label that differs from
+    # the name (the old 'type'/'esc' aliases) silently breaks those lookups.
+    keys = [
+        ("lat", "timeseries"), ("lon", "timeseries"),
+        ("active", "timeseries"), ("entity_type", "timeseries"),
+        ("bpm", "timeseries"), ("last_escalation", "timeseries"),
+        ("last_situation", "timeseries"), ("zone", "timeseries"),
+        ("battery", "timeseries"), ("worn", "timeseries"),
+        ("resident_name", "attribute"),
+    ]
     return [
-        {"name": "lat", "type": "timeseries", "label": "lat",
-         "color": "#03a9f4", "settings": {}, "_hash": _new_hash()},
-        {"name": "lon", "type": "timeseries", "label": "lon",
-         "color": "#ff5252", "settings": {}, "_hash": _new_hash()},
-        {"name": "active", "type": "timeseries", "label": "active",
-         "color": "#9e9e9e", "settings": {}, "_hash": _new_hash()},
-        {"name": "entity_type", "type": "timeseries", "label": "type",
-         "color": "#9e9e9e", "settings": {}, "_hash": _new_hash()},
-        {"name": "bpm", "type": "timeseries", "label": "bpm",
-         "color": "#e91e63", "settings": {}, "_hash": _new_hash()},
-        {"name": "last_escalation", "type": "timeseries", "label": "esc",
-         "color": "#d32f2f", "settings": {}, "_hash": _new_hash()},
-        {"name": "zone", "type": "timeseries", "label": "zone",
-         "color": "#475569", "settings": {}, "_hash": _new_hash()},
+        {"name": n, "type": t, "label": n,
+         "color": _color_for(i), "settings": {}, "_hash": _new_hash()}
+        for i, (n, t) in enumerate(keys)
     ]
 
 
 # 陽明交大 光復校區 (NYCU Guangfu campus, Hsinchu)
 NYCU_CENTER = "24.78686,120.99681"
+
+# ---- Map marker / label / tooltip functions ----
+# Big SVG pin (44px, white ring + drop shadow) so people actually spot it on the
+# map; glyph + colour encode the state: 🟢♥ wearer normal, 🟠/🔴 ! fall states,
+# 🔵 G guardian. Inactive entities return a 1×1 transparent image (hidden).
+_MAP_PIN_JS = (
+    "var d = data || {};"
+    "function uri(s){return 'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(s);}"
+    "if (d['active'] === false || d['active'] === 'false') {"
+    " return uri(\"<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>\"); }"
+    "var c = '#16a34a', t = '\\u2665';"
+    "if (d['entity_type'] === 'guardian') { c = '#2563eb'; t = 'G'; }"
+    "else if (d['last_escalation'] === 'SOS_COLLAPSE') { c = '#dc2626'; t = '!'; }"
+    "else if (d['last_escalation'] === 'ASK_OK') { c = '#f59e0b'; t = '!'; }"
+    "var s = \"<svg xmlns='http://www.w3.org/2000/svg' width='44' height='52' viewBox='0 0 44 52'>\""
+    " + \"<defs><filter id='sh' x='-30%' y='-20%' width='160%' height='150%'>\""
+    " + \"<feDropShadow dx='0' dy='2' stdDeviation='2' flood-opacity='0.35'/></filter></defs>\""
+    " + \"<path filter='url(#sh)' d='M22 1.5C11.8 1.5 3.5 9.8 3.5 20c0 13 18.5 30 18.5 30s18.5-17 18.5-30C40.5 9.8 32.2 1.5 22 1.5z'\""
+    " + \" fill='\" + c + \"' stroke='#ffffff' stroke-width='2.5'/>\""
+    " + \"<circle cx='22' cy='20' r='11' fill='#ffffff'/>\""
+    " + \"<text x='22' y='25' text-anchor='middle' font-family='Roboto,Arial,sans-serif'\""
+    " + \" font-size='14' font-weight='800' fill='\" + c + \"'>\" + t + \"</text>\""
+    " + \"</svg>\";"
+    "return uri(s);"
+)
+
+# White name chip under the pin: resident name (or id) + live ♥bpm for wearers,
+# guardian id for guardians. Border colour repeats the pin's state colour.
+_MAP_LABEL_JS = (
+    "var d = data || {};"
+    "if (d['active'] === false || d['active'] === 'false') { return ''; }"
+    "var c = '#16a34a';"
+    "if (d['entity_type'] === 'guardian') { c = '#2563eb'; }"
+    "else if (d['last_escalation'] === 'SOS_COLLAPSE') { c = '#dc2626'; }"
+    "else if (d['last_escalation'] === 'ASK_OK') { c = '#f59e0b'; }"
+    "var nm = String(d['entityName'] || '');"
+    "var isW = nm.indexOf('Wearer_') === 0;"
+    "var disp = isW ? (d['resident_name'] || nm.replace('Wearer_','')) : nm.replace('Guardian_','');"
+    "var bpm = (isW && d['bpm'] != null) ? ' \\u2665' + Math.round(d['bpm']) : '';"
+    "return '<div style=\"background:#fff;border:2px solid ' + c + ';border-radius:11px;"
+    "padding:1px 8px;font-family:Roboto,\\'Noto Sans TC\\',sans-serif;font-size:12px;font-weight:700;"
+    "color:#0f172a;box-shadow:0 1px 4px rgba(0,0,0,0.3);white-space:nowrap;\">'"
+    " + disp + '<span style=\"color:' + c + ';\">' + bpm + '</span></div>';"
+)
+
+# Click tooltip = mini status card in Chinese: name + state pill, then
+# situation / HR / named zone / battery / HR-sync rows (wearer) or duty row
+# (guardian). All values are live datasource keys.
+_MAP_TOOLTIP_JS = (
+    "var d = data || {};"
+    "var nm = String(d['entityName'] || '');"
+    "var isW = nm.indexOf('Wearer_') === 0;"
+    "var disp = isW ? (d['resident_name'] || nm.replace('Wearer_','')) : nm.replace('Guardian_','');"
+    "var c = '#16a34a', st = '\\u72c0\\u614b\\u6b63\\u5e38 Normal';"  # 狀態正常
+    "if (!isW) { c = '#2563eb'; st = '\\u5b88\\u8b77\\u8005 Guardian'; }"  # 守護者
+    "else if (d['last_escalation'] === 'SOS_COLLAPSE') { c = '#dc2626'; st = '\\ud83c\\udd98 \\u5012\\u5730 Collapse'; }"  # 🆘 倒地
+    "else if (d['last_escalation'] === 'ASK_OK') { c = '#f59e0b'; st = '\\u26a0\\ufe0f \\u7591\\u4f3c\\u8dcc\\u5012 Fall?'; }"  # ⚠️ 疑似跌倒
+    "function r(l, v){ return '<div style=\"display:flex;justify-content:space-between;gap:18px;"
+    "padding:3px 0;border-bottom:1px solid #eef2f7;font-size:12px;\">"
+    "<span style=\"color:#64748b;\">' + l + '</span><b>' + v + '</b></div>'; }"
+    "var rows = '';"
+    "if (isW) {"
+    " rows += r('\\u5fc3\\u7387 HR', (d['bpm'] != null ? Math.round(d['bpm']) + ' bpm' : '—'));"  # 心率
+    " rows += r('\\u4f4d\\u7f6e Location', '\\ud83d\\udccd ' + (d['zone'] || '—'));"  # 位置 📍
+    " rows += r('\\u624b\\u9336\\u96fb\\u91cf Battery', (d['battery'] != null ? Math.round(d['battery']) + '%' : '—'));"  # 手錶電量
+    " var wv = d['worn'];"
+    " rows += r('\\u4f69\\u6234\\u72c0\\u614b Worn', (wv===true||wv==='true') ? '\\u2705 \\u914d\\u6234\\u4e2d'"  # 佩戴狀態 ✅ 配戴中
+    " : ((wv===false||wv==='false') ? '\\u26a0\\ufe0f \\u672a\\u540c\\u6b65\\u5fc3\\u7387' : '—'));"  # ⚠️ 未同步心率
+    "} else {"
+    " var act = (d['active']===true||d['active']==='true');"
+    " rows += r('\\u52e4\\u52d9 Duty', act ? '\\ud83d\\udfe2 \\u503c\\u73ed\\u4e2d On duty' : '\\u96e2\\u7dda Offline');"  # 勤務 🟢 值班中 / 離線
+    "}"
+    "return '<div style=\"font-family:Roboto,\\'Noto Sans TC\\',sans-serif;min-width:190px;padding:2px;\">'"
+    " + '<div style=\"display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;\">'"
+    " + '<b style=\"font-size:14px;\">' + disp + '</b>'"
+    " + '<span style=\"background:' + c + '1f;color:' + c + ';font-size:11px;font-weight:700;"
+    "padding:2px 9px;border-radius:10px;white-space:nowrap;\">' + st + '</span></div>'"
+    " + rows + '</div>';"
+)
 
 
 def workers_map(workers_alias_id: str, title: str = "Workers map (live)",
@@ -1437,23 +1516,33 @@ def workers_map(workers_alias_id: str, title: str = "Workers map (live)",
         "settings": {
             "latKeyName": "lat",
             "lngKeyName": "lon",
+            # Big state-coloured SVG pins (see _MAP_PIN_JS) instead of the tiny
+            # default dot, plus a name+bpm chip and a Chinese mini status card
+            # on click. colorFunction stays as a fallback for renderers that
+            # ignore the image function.
+            "useMarkerImageFunction": True,
+            "markerImageFunction": _MAP_PIN_JS,
+            "markerImageSize": 44,
             "showLabel": True,
+            "useLabelFunction": True,
             "label": "${entityName}",
-            "useLabelFunction": False,
+            "labelFunction": _MAP_LABEL_JS,
             "useColorFunction": True,
             "colorFunction": (
-                "if (data && data['active'] === false) { return 'rgba(0,0,0,0)'; } "
+                "if (data && (data['active'] === false || data['active'] === 'false')) { return 'rgba(0,0,0,0)'; } "
                 "if (data && (data['entity_type'] === 'guardian')) { return '#2563eb'; } "
-                "if (data && (data['last_escalation'] === 'SOS_COLLAPSE' "
-                "|| data['last_escalation'] === 'ASK_OK')) "
-                "{ return '#dc2626'; } "
+                "if (data && data['last_escalation'] === 'SOS_COLLAPSE') { return '#dc2626'; } "
+                "if (data && data['last_escalation'] === 'ASK_OK') { return '#f59e0b'; } "
                 "return '#16a34a';"
             ),
             "showTooltip": True,
+            "showTooltipAction": "click",
+            "autocloseTooltip": True,
+            "useTooltipFunction": True,
+            "tooltipFunction": _MAP_TOOLTIP_JS,
             "tooltipPattern": (
                 "<b>${entityName}</b><br/>"
                 "位置 zone: ${zone}<br/>"
-                "type: ${entity_type}<br/>"
                 "bpm: ${bpm}<br/>"
                 "esc: ${last_escalation}"
             ),
@@ -1629,8 +1718,9 @@ def status_strip(alias_id: str, sizeX: int = 16, sizeY: int = 3) -> dict:
 # ---- Resident profile card (TB Assisted-Living style: avatar + resident data) ----
 # One clean light card = the dashboard centrepiece. No "call" button here — the
 # wearer should never be phoned to be told to do something; dispatch lives on the
-# guardian rows instead. This card is a calm, information-dense identity panel:
-# live status + named location + resident metadata + emergency contact.
+# guardian rows instead. This card is a calm identity panel: live status + named
+# location + device state. (Age / chronic history / emergency contact rows were
+# dropped on request — they were demo-only filler.)
 _PROFILE_JS = (
     "var d = data[0] || {};"
     "var nm = (d['entityName']||'Wearer_?').replace('Wearer_','');"
@@ -1642,7 +1732,9 @@ _PROFILE_JS = (
     "var batt = (d['battery']!=null)?Math.round(d['battery']):'--';"
     "var chg = (d['charging']===true||d['charging']==='true');"
     "var wv = d['worn'];"
-    "var wornTxt = (wv===true||wv==='true')?'✅ 配戴中 On-wrist':((wv===false||wv==='false')?'⚠️ 未配戴 Off-wrist':'—');"
+    # worn=false really means "no recent HR sample" (skin-contact proxy), so say
+    # that instead of accusing the resident of taking the watch off.
+    "var wornTxt = (wv===true||wv==='true')?'✅ 配戴中 On-wrist':((wv===false||wv==='false')?'⚠️ 未同步心率 No HR sync':'—');"
     "var act = (d['active']===true||d['active']==='true');"
     "var color='#16a34a', sLabel='正常', sFull='狀態正常 Normal', risk='低', riskC='#16a34a';"
     "if(esc==='SOS_COLLAPSE'){color='#dc2626';sLabel='倒地';sFull='倒地 Collapse';risk='危急';riskC='#dc2626';}"
@@ -1654,7 +1746,6 @@ _PROFILE_JS = (
     " if(s<60) return s+' 秒前'; if(s<3600) return Math.round(s/60)+' 分鐘前';"
     " if(s<86400) return Math.round(s/3600)+' 小時前'; return Math.round(s/86400)+' 天前';}"
     "var sync = (la!=null)?ago(la):(act?'連線中 Online':'離線 Offline');"
-    "var ec = (d['emergency_name']||'王小明')+' · '+(d['emergency_relation']||'家屬')+' · '+(d['emergency_phone']||'—');"
     "function m(l,v,u,c){return '<div class=\"m\"><div class=\"ml\">'+l+'</div><div class=\"mv\" style=\"color:'+(c||'#0f172a')+'\">'+v+'<small>'+(u||'')+'</small></div></div>';}"
     "function r(l,v){return '<div class=\"dr\"><span class=\"dl\">'+l+'</span><span class=\"dv\">'+v+'</span></div>';}"
     "return '<div class=\"pc\">'"
@@ -1665,14 +1756,10 @@ _PROFILE_JS = (
     "+ '<div class=\"mg\">'+m('心率 HR',bpm,' bpm',color)+m('情境',sLabel,'',null)+m('風險',risk,'',riskC)+'</div>'"
     "+ '<div class=\"dg\">'"
     "+   r('目前位置 Location','📍 '+zone)"
-    "+   r('年齡 / 性別',(d['resident_age']||'74')+' · '+(d['resident_gender']||'男'))"
-    "+   r('慢性病 History',(d['resident_chronic']||'—'))"
     "+   r('手錶電量 Battery',battIcon+' '+batt+'%'+(chg?' ⚡':''))"
     "+   r('佩戴狀態 Worn',wornTxt)"
     "+   r('最後同步 Sync',sync)"
     "+ '</div>'"
-    "+ '<div class=\"ec\"><span class=\"ph\">📞</span><div><div class=\"ecl\">緊急聯絡 Emergency contact</div><b>'+ec+'</b></div></div>'"
-    "+ '<div class=\"demo\">※ 年齡 / 慢性病 / 緊急聯絡為示範資料 Demo profile</div>'"
     "+ '</div>';"
 )
 
@@ -1698,13 +1785,6 @@ _PROFILE_CSS = (
     ".dr{display:flex;justify-content:space-between;border-bottom:1px solid #eef2f7;padding:clamp(5px,1cqmin,7px) 0;font-size:clamp(10px,1.9cqmin,13px);}"
     ".dr:last-child{border-bottom:none;}"
     ".dl{color:#64748b;}.dv{font-weight:600;}"
-    ".ec{display:flex;align-items:center;gap:clamp(6px,1.2cqmin,8px);margin-top:clamp(10px,2.1cqmin,14px);padding:clamp(8px,1.6cqmin,11px) clamp(9px,1.8cqmin,12px);background:#f8fafc;"
-    "border:1px solid #eef2f7;border-radius:clamp(7px,1.5cqmin,10px);text-align:left;}"
-    ".ec .ph{width:clamp(22px,4.4cqmin,30px);height:clamp(22px,4.4cqmin,30px);border-radius:clamp(6px,1.2cqmin,8px);background:#eff6ff;color:#2563eb;display:flex;"
-    "align-items:center;justify-content:center;flex:0 0 auto;}"
-    ".ecl{color:#64748b;font-size:clamp(9px,1.6cqmin,11px);}"
-    ".ec b{font-size:clamp(9px,1.8cqmin,12px);}"
-    ".demo{font-size:clamp(9px,1.5cqmin,10px);color:#94a3b8;text-align:left;margin-top:clamp(6px,1.2cqmin,8px);}"
 )
 
 
@@ -1721,11 +1801,8 @@ def profile_card(alias_id: str, sizeX: int = 9, sizeY: int = 11) -> dict:
             ("battery", "timeseries"), ("charging", "timeseries"),
             ("worn", "timeseries"), ("last_seen", "timeseries"),
             ("lastActivityTime", "attribute"),
-            # resident record (set by a care admin; provisioner seeds demo values)
-            ("resident_name", "attribute"), ("resident_age", "attribute"),
-            ("resident_gender", "attribute"), ("resident_chronic", "attribute"),
-            ("emergency_name", "attribute"),
-            ("emergency_relation", "attribute"), ("emergency_phone", "attribute"),
+            # resident display name (set by a care admin; provisioner seeds it)
+            ("resident_name", "attribute"),
         ]),
         "timewindow": {"realtime": {"timewindowMs": 86400000}},
         "showTitle": False,
@@ -1814,23 +1891,32 @@ def stats_strip(alias_id: str, sizeX: int = 24, sizeY: int = 3) -> dict:
 # "dispatch" button — the actual paging is automatic via the Notification Center
 # rule. Uses the native TB title bar for visual consistency with the other cards.
 _GUARDIANS_JS = (
+    # __WLAT__/__WLON__ are only the provision-time FALLBACK; the wearer's live
+    # lat/lon ride in as a second datasource (rows named Wearer_*) so the
+    # distance keeps updating as either side moves.
     "var WLAT=__WLAT__, WLON=__WLON__;"
+    "for (var w=0;w<data.length;w++){ var wd=data[w]||{};"
+    " if(String(wd['entityName']||'').indexOf('Wearer_')===0 && wd['lat']!=null && wd['lon']!=null){"
+    "   WLAT=+wd['lat']; WLON=+wd['lon']; break; } }"
     "function hav(la1,lo1,la2,lo2){var R=6371000,dLa=(la2-la1)*Math.PI/180,dLo=(lo2-lo1)*Math.PI/180,"
     "a=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)*Math.sin(dLo/2);"
     "return 2*R*Math.asin(Math.sqrt(a));}"
     "var pal=['#16a34a','#2563eb','#7c3aed','#0891b2'];"
-    "var rows='';"
+    "var rows='', g=0;"
     "for (var i=0;i<data.length;i++){"
     " var d=data[i]||{};"
-    " var gn=(d['entityName']||'guardian').replace('Guardian_','');"
+    " var en=String(d['entityName']||'guardian');"
+    " if(en.indexOf('Wearer_')===0){ continue; }"
+    " var gn=en.replace('Guardian_','');"
     " var act=(d['active']===true||d['active']==='true');"
-    " var c=pal[i%pal.length];"
+    " var c=pal[g%pal.length];"
     " var dist='—';"
     " if(d['lat']!=null && d['lon']!=null){ var m=hav(+d['lat'],+d['lon'],WLAT,WLON);"
     "   dist=(m<1000)?(Math.round(m)+' m'):((m/1000).toFixed(1)+' km'); }"
     " var dot=act?'#16a34a':'#94a3b8';"
+    " g+=1;"
     " rows += '<div class=\"gr\">'"
-    "   + '<span class=\"gd\" style=\"background:'+c+'1f;border:2px solid '+c+';color:'+c+'\">G'+(i+1)+'</span>'"
+    "   + '<span class=\"gd\" style=\"background:'+c+'1f;border:2px solid '+c+';color:'+c+'\">G'+g+'</span>'"
     "   + '<div class=\"gi\"><div class=\"gn\">'+gn+'</div>'"
     "   +   '<div class=\"gm\"><i class=\"gdot\" style=\"background:'+dot+'\"></i>'+(act?'值班中 On duty':'離線')+' · 距配戴者 '+dist+'</div></div>'"
     "   + '</div>';"
@@ -1858,12 +1944,16 @@ _GUARDIANS_CSS = (
 )
 
 
-def guardians_card(guardians_alias_id: str, wearer_lat: float, wearer_lon: float,
+def guardians_card(guardians_alias_id: str, wearers_alias_id: str,
+                   wearer_lat: float, wearer_lon: float,
                    sizeX: int = 8, sizeY: int = 6) -> dict:
     js = _GUARDIANS_JS.replace("__WLAT__", repr(wearer_lat)).replace("__WLON__", repr(wearer_lon))
     cfg = {
+        # Guardians roster + the wearer's live position (distance reference).
         "datasources": _ds_latest(guardians_alias_id, [
             ("lat", "timeseries"), ("lon", "timeseries"), ("active", "timeseries"),
+        ]) + _ds_latest(wearers_alias_id, [
+            ("lat", "timeseries"), ("lon", "timeseries"),
         ]),
         "timewindow": {"realtime": {"timewindowMs": 86400000}},
         "showTitle": True,
@@ -2319,7 +2409,8 @@ def build_dashboard(dashboard_name: str, wearers: list[dict] | None = None) -> d
         add(alarms_table(workers_alias_id, "告警歷史 Alarm history",
                          sizeX=16, sizeY=8, status_list=[]),
             col=0, row=6, state="history")
-        add(guardians_card(guardians_alias_id, 24.78686, 120.99681, sizeX=8, sizeY=4),
+        add(guardians_card(guardians_alias_id, workers_alias_id,
+                           24.78686, 120.99681, sizeX=8, sizeY=4),
             col=16, row=6, state="history")
         add(dispatch_segment(primary["device_id"], "guardian1", "guardian2",
                              sizeX=8, sizeY=2), col=16, row=10, state="history")
